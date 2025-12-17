@@ -19,6 +19,14 @@ import logging
 import sys
 
 
+# Configuration
+ENABLE_IP_WHITELIST = os.getenv('ENABLE_IP_WHITELIST', 'true').lower() == 'true'
+IP_REFRESH_HOURS = int(os.getenv('IP_REFRESH_HOURS', '24'))
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
+
+# TRMNL API endpoint for IP addresses
+TRMNL_IPS_API = 'https://usetrmnl.com/api/ips'
+
 # Configure logging for Docker/production
 log_handler = logging.StreamHandler(sys.stdout)
 log_handler.setFormatter(logging.Formatter(
@@ -26,14 +34,15 @@ log_handler.setFormatter(logging.Formatter(
     datefmt='%Y-%m-%d %H:%M:%S'
 ))
 
-# Configure root logger
+# Configure root logger with environment variable
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
     handlers=[log_handler],
-    force=True  # Override any existing configuration
+    force=True
 )
 
 logger = logging.getLogger(__name__)
+logger.info(f"Logging initialized at level: {LOG_LEVEL}")
 
 # Disable Flask's default logger to avoid duplicates
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
@@ -41,13 +50,6 @@ logging.getLogger('werkzeug').setLevel(logging.WARNING)
 # Ensure logs are flushed immediately (important for Docker)
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
-
-# Configuration
-ENABLE_IP_WHITELIST = os.getenv('ENABLE_IP_WHITELIST', 'true').lower() == 'true'
-IP_REFRESH_HOURS = int(os.getenv('IP_REFRESH_HOURS', '24'))
-
-# TRMNL API endpoint for IP addresses
-TRMNL_IPS_API = 'https://usetrmnl.com/api/ips'
 
 # Global variables for IP management
 TRMNL_IPS = set()
@@ -538,7 +540,7 @@ def register_routes(app):
         health_data = {
             'status': 'healthy',
             'service': 'imap-email-reader',
-            'version': '12.1-logging',
+            'version': '12.2-docker-logging',
             'python': '3.13',
             'flask': 'async',
             'timestamp': datetime.now().isoformat()
@@ -564,6 +566,29 @@ def register_routes(app):
             }
 
         return jsonify(health_data)
+
+    @app.route('/test-logging')
+    def test_logging():
+        """Test endpoint to verify logging is working"""
+        logger.debug("🐛 DEBUG: Test debug message")
+        logger.info("ℹ️  INFO: Test info message")
+        logger.warning("⚠️  WARNING: Test warning message")
+        logger.error("❌ ERROR: Test error message")
+
+        # Direct stdout/stderr test
+        print("DIRECT STDOUT: Print test", flush=True)
+        print("DIRECT STDERR: Stderr test", file=sys.stderr, flush=True)
+
+        return jsonify({
+            'status': 'ok',
+            'message': 'Check your logs - you should see 4 log messages + 2 print statements',
+            'config': {
+                'pythonunbuffered': os.getenv('PYTHONUNBUFFERED'),
+                'log_level': LOG_LEVEL,
+                'stdout_line_buffering': sys.stdout.line_buffering,
+                'stderr_line_buffering': sys.stderr.line_buffering
+            }
+        })
 
 
 # Create app instance
