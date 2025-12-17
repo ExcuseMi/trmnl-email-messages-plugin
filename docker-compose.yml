@@ -9,6 +9,8 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
     networks:
       - imap-network
     healthcheck:
