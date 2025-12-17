@@ -63,6 +63,7 @@ LOCALHOST_IPS = ['127.0.0.1', '::1']
 async def fetch_trmnl_ips():
     """Fetch current TRMNL server IPs from their API"""
     try:
+        print(f"[fetch_trmnl_ips] Fetching from {TRMNL_IPS_API}", flush=True)
         logger.info(f"Fetching TRMNL IPs from {TRMNL_IPS_API}")
 
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -80,11 +81,13 @@ async def fetch_trmnl_ips():
             ipv4_count = len(ipv4_list)
             ipv6_count = len(ipv6_list)
 
+            print(f"[fetch_trmnl_ips] Fetched {len(ips)} IPs ({ipv4_count} IPv4, {ipv6_count} IPv6)", flush=True)
             logger.info(f"Fetched {len(ips)} TRMNL IPs ({ipv4_count} IPv4, {ipv6_count} IPv6)")
             logger.debug(f"Whitelisted IPs: {sorted(list(ips))}")
             return ips
 
     except Exception as e:
+        print(f"[fetch_trmnl_ips] ERROR: {e}", flush=True)
         logger.error(f"Failed to fetch TRMNL IPs: {e}")
         logger.warning("IP whitelist will use fallback IPs only")
         return set(LOCALHOST_IPS)
@@ -488,6 +491,7 @@ def register_routes(app):
     @require_whitelisted_ip
     async def get_messages():
         """Get latest email messages via IMAP (fully async)"""
+        print(f"[/messages] Received {request.method} request", flush=True)
         logger.info(f"Received {request.method} request to /messages from {get_client_ip()}")
 
         params, error, status_code = get_request_params()
@@ -495,6 +499,7 @@ def register_routes(app):
             logger.warning(f"Invalid request parameters: {error}")
             return jsonify(error), status_code
 
+        print(f"[/messages] Params: server={params['server']}, folder={params['folder']}", flush=True)
         logger.info(f"Request params: server={params['server']}, folder={params['folder']}, limit={params['limit']}, unread_only={params['unread_only']}, gmail_category={params.get('gmail_category')}")
 
         try:
@@ -521,12 +526,14 @@ def register_routes(app):
             if params['gmail_category']:
                 response_data['gmail_category'] = params['gmail_category']
 
+            print(f"[/messages] Successfully fetched {len(messages)} messages", flush=True)
             logger.info(f"Successfully fetched {len(messages)} messages")
             return jsonify(response_data)
 
         except Exception as e:
             error_msg = str(e)
             status_code = 401 if 'authentication' in error_msg.lower() or 'login' in error_msg.lower() else 500
+            print(f"[/messages] ERROR: {error_msg}", flush=True)
             logger.error(f"Request failed with status {status_code}: {error_msg}")
             return jsonify({'error': error_msg}), status_code
 
@@ -594,12 +601,25 @@ def register_routes(app):
 # Create app instance
 app = create_app()
 
+# Print immediately to confirm app is loading
+print("=" * 60, flush=True)
+print("IMAP Email Reader - Module Loading", flush=True)
+print(f"Python: {sys.version}", flush=True)
+print(f"PYTHONUNBUFFERED: {os.getenv('PYTHONUNBUFFERED')}", flush=True)
+print(f"LOG_LEVEL: {LOG_LEVEL}", flush=True)
+print("=" * 60, flush=True)
+
 
 # Initialize TRMNL IPs on startup
 async def startup_init():
     """Initialize TRMNL IPs on startup"""
     global TRMNL_IPS, last_ip_refresh
 
+    print("=" * 60, flush=True)
+    print("Running startup_init()", flush=True)
+    print("=" * 60, flush=True)
+
+    logger.info("=" * 60)
     logger.info("Starting IMAP Email Reader")
     logger.info(f"IP Whitelist: {'Enabled' if ENABLE_IP_WHITELIST else 'Disabled'}")
     logger.info(f"Refresh Interval: {IP_REFRESH_HOURS} hours")
@@ -614,20 +634,21 @@ async def startup_init():
     else:
         logger.warning("IP whitelist is disabled - all IPs will be allowed!")
 
+    logger.info("=" * 60)
+    logger.info("Startup Complete - Ready to accept requests")
+    logger.info("=" * 60)
+
 
 # Run startup initialization
 try:
-    logger.info("="*50)
-    logger.info("IMAP Email Reader Starting Up")
-    logger.info("="*50)
+    print("About to run startup initialization...", flush=True)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(startup_init())
     loop.close()
-    logger.info("="*50)
-    logger.info("Startup Complete - Ready to accept requests")
-    logger.info("="*50)
+    print("Startup initialization complete!", flush=True)
 except Exception as e:
+    print(f"ERROR in startup: {e}", flush=True)
     logger.error(f"Startup error: {e}")
     logger.warning("Continuing with fallback IPs (localhost only)")
 
