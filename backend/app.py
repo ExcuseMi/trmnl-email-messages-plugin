@@ -10,6 +10,155 @@ from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from datetime import datetime
 import time
+import os
+from functools import wraps
+import asyncio
+import httpx
+import threading
+
+
+# Configuration
+ENABLE_IP_WHITELIST = os.getenv('ENABLE_IP_WHITELIST', 'true').lower() == 'true'
+IP_REFRESH_HOURS = int(os.getenv('IP_REFRESH_HOURS', '24'))  # Refresh TRMNL IPs every 24 hours
+
+# TRMNL API endpoint for IP addresses
+TRMNL_IPS_API = 'https://usetrmnl.com/api/ips'
+
+# Global variables for IP management
+TRMNL_IPS = set()  # Will be populated from API
+TRMNL_IPS_LOCK = threading.Lock()
+last_ip_refresh = None
+
+# Always allow localhost
+LOCALHOST_IPS = ['127.0.0.1', '::1']
+
+
+async def fetch_trmnl_ips():
+    """Fetch current TRMNL server IPs from their API"""
+    try:
+        print(f"🔄 Fetching TRMNL IPs from {TRMNL_IPS_API}...")
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(TRMNL_IPS_API)
+            response.raise_for_status()
+            data = response.json()
+
+            # Extract IPv4 and IPv6 addresses
+            ipv4_list = data.get('data', {}).get('ipv4', [])
+            ipv6_list = data.get('data', {}).get('ipv6', [])
+
+            # Combine into set
+            ips = set(ipv4_list + ipv6_list + LOCALHOST_IPS)
+
+            ipv4_count = len(ipv4_list)
+            ipv6_count = len(ipv6_list)
+
+            print(f"✅ Fetched {len(ips)} TRMNL IPs from API ({ipv4_count} IPv4, {ipv6_count} IPv6)")
+            print(f"   Whitelisted IPs: {sorted(list(ips))}")
+            return ips
+
+    except Exception as e:
+        print(f"❌ Warning: Failed to fetch TRMNL IPs: {e}")
+        print("   IP whitelist will use fallback IPs only")
+        # Fallback to localhost only if API fails
+        return set(LOCALHOST_IPS)
+
+
+def update_trmnl_ips_sync():
+    """Update TRMNL IPs - sync wrapper for background thread"""
+    global TRMNL_IPS, last_ip_refresh
+
+    try:
+        print("🔄 Starting scheduled TRMNL IP refresh...")
+        # Run async function in new event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            ips = loop.run_until_complete(fetch_trmnl_ips())
+            with TRMNL_IPS_LOCK:
+                TRMNL_IPS = ips
+                last_ip_refresh = datetime.now()
+            print(f"✅ TRMNL IPs updated successfully at {last_ip_refresh.isoformat()}")
+        finally:
+            loop.close()
+    except Exception as e:
+        print(f"❌ Error updating TRMNL IPs: {e}")
+
+
+def ip_refresh_worker():
+    """Background worker that refreshes TRMNL IPs periodically"""
+    while True:
+        try:
+            time.sleep(IP_REFRESH_HOURS * 3600)  # Sleep for configured hours
+            update_trmnl_ips_sync()
+        except Exception as e:
+            print(f"❌ IP refresh worker error: {e}")
+            # Sleep for 1 hour before retrying on error
+            time.sleep(3600)
+
+
+def start_ip_refresh_worker():
+    """Start background thread for IP refresh"""
+    if not ENABLE_IP_WHITELIST:
+        print("ℹ️  IP whitelist disabled, skipping refresh scheduler")
+        return
+
+    worker_thread = threading.Thread(
+        target=ip_refresh_worker,
+        daemon=True,
+        name='IP-Refresh-Worker'
+    )
+    worker_thread.start()
+    print(f"✅ Started IP refresh worker (refresh every {IP_REFRESH_HOURS} hours)")
+
+
+def get_allowed_ips():
+    """Get current list of allowed IPs from TRMNL API"""
+    with TRMNL_IPS_LOCK:
+        return TRMNL_IPS.copy()
+
+
+def get_client_ip():
+    """Get the real client IP address, accounting for proxies"""
+    # Check X-Forwarded-For header (set by reverse proxies)
+    if request.headers.get('X-Forwarded-For'):
+        # X-Forwarded-For can be a comma-separated list, take the first one
+        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
+
+    # Check X-Real-IP header (set by some proxies like Nginx)
+    if request.headers.get('X-Real-IP'):
+        return request.headers.get('X-Real-IP').strip()
+
+    # Check CF-Connecting-IP (Cloudflare)
+    if request.headers.get('CF-Connecting-IP'):
+        return request.headers.get('CF-Connecting-IP').strip()
+
+    # Fall back to direct remote address
+    return request.remote_addr
+
+
+def require_whitelisted_ip(f):
+    """Decorator to enforce IP whitelisting on routes"""
+    @wraps(f)
+    async def decorated_function(*args, **kwargs):
+        if not ENABLE_IP_WHITELIST:
+            # IP whitelist disabled, allow all requests
+            return await f(*args, **kwargs)
+
+        client_ip = get_client_ip()
+        allowed_ips = get_allowed_ips()
+
+        if client_ip not in allowed_ips:
+            print(f"🚫 Blocked request from unauthorized IP: {client_ip}")
+            return jsonify({
+                'error': 'Access denied',
+                'message': 'Your IP address is not authorized to access this service'
+            }), 403
+
+        print(f"✅ Allowed request from whitelisted IP: {client_ip}")
+        return await f(*args, **kwargs)
+
+    return decorated_function
 
 
 def create_app():
@@ -335,6 +484,7 @@ def register_routes(app):
     """Register all Flask routes"""
 
     @app.route('/messages', methods=['GET', 'POST'])
+    @require_whitelisted_ip
     async def get_messages():
         """
         Get latest email messages via IMAP (fully async)
@@ -653,18 +803,76 @@ def register_routes(app):
     @app.route('/health')
     def health():
         """Health check endpoint"""
-        return jsonify({
+        client_ip = get_client_ip()
+        allowed_ips = get_allowed_ips()
+        is_whitelisted = client_ip in allowed_ips if ENABLE_IP_WHITELIST else True
+
+        health_data = {
             'status': 'healthy',
             'service': 'imap-email-reader',
-            'version': '11.0-optimized',
+            'version': '12.0-dynamic-ips',
             'python': '3.13',
             'flask': 'async',
             'timestamp': datetime.now().isoformat()
-        })
+        }
+
+        if ENABLE_IP_WHITELIST:
+            with TRMNL_IPS_LOCK:
+                trmnl_count = len(TRMNL_IPS)
+                last_refresh = last_ip_refresh.isoformat() if last_ip_refresh else None
+
+            health_data['ip_whitelist'] = {
+                'enabled': True,
+                'your_ip': client_ip,
+                'whitelisted': is_whitelisted,
+                'ips_loaded': trmnl_count,
+                'last_refresh': last_refresh,
+                'refresh_interval_hours': IP_REFRESH_HOURS
+            }
+        else:
+            health_data['ip_whitelist'] = {
+                'enabled': False,
+                'your_ip': client_ip
+            }
+
+        return jsonify(health_data)
 
 
 # Create app instance for direct running
 app = create_app()
+
+
+# Initialize TRMNL IPs on startup
+async def startup_init():
+    """Initialize TRMNL IPs on startup"""
+    global TRMNL_IPS, last_ip_refresh
+
+    print("🚀 Starting IMAP Email Reader...")
+    print(f"   IP Whitelist: {'Enabled' if ENABLE_IP_WHITELIST else 'Disabled'}")
+    print(f"   Refresh Interval: {IP_REFRESH_HOURS} hours")
+
+    if ENABLE_IP_WHITELIST:
+        # Fetch IPs immediately on startup
+        ips = await fetch_trmnl_ips()
+        with TRMNL_IPS_LOCK:
+            TRMNL_IPS = ips
+            last_ip_refresh = datetime.now()
+
+        # Start background worker for periodic refresh
+        start_ip_refresh_worker()
+    else:
+        print("⚠️  IP whitelist is disabled - all IPs will be allowed!")
+
+
+# Run startup initialization
+try:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(startup_init())
+    loop.close()
+except Exception as e:
+    print(f"❌ Startup error: {e}")
+    print("   Continuing with fallback IPs (localhost only)")
 
 
 if __name__ == '__main__':
