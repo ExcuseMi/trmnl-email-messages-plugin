@@ -7,7 +7,7 @@ from flask import Flask, request, jsonify
 import aioimaplib
 import email
 from email.header import decode_header
-from email.utils import parsedate_to_datetime
+from email.utils import parsedate_to_datetime, parseaddr
 from datetime import datetime
 import time
 import os
@@ -16,15 +16,23 @@ import asyncio
 import httpx
 import threading
 import logging
+import sys
 
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler()  # Ensure logs go to stdout
+    ]
 )
 logger = logging.getLogger(__name__)
+
+# Set Hypercorn/Werkzeug loggers to INFO as well
+logging.getLogger('hypercorn.error').setLevel(logging.INFO)
+logging.getLogger('hypercorn.access').setLevel(logging.INFO)
 
 # Configuration
 ENABLE_IP_WHITELIST = os.getenv('ENABLE_IP_WHITELIST', 'true').lower() == 'true'
@@ -237,16 +245,15 @@ def parse_message_data(header_data, msg_id, is_read=True):
     subject = decode_mime_header(email_message.get('Subject', 'No Subject'))
     date_str = email_message.get('Date', '')
 
-    # Extract sender email from From header
+    # Extract sender email using parseaddr (more reliable)
     sender_email = ""
     if from_header:
         decoded_from = decode_mime_header(from_header)
-        # Extract email from "Name <email@example.com>" or just "email@example.com"
-        if '<' in decoded_from and '>' in decoded_from:
-            sender_email = decoded_from.split('<')[1].split('>')[0].strip()
-        else:
-            # Assume the whole thing is an email address
-            sender_email = decoded_from.strip()
+        # parseaddr returns (name, email) tuple
+        _, email_addr = parseaddr(decoded_from)
+        sender_email = email_addr if email_addr else ""
+
+    logger.debug(f"Parsed message {msg_id}: sender={sender}, email={sender_email}, subject={subject}")
 
     # Parse timestamp
     try:
@@ -465,9 +472,14 @@ def register_routes(app):
     @require_whitelisted_ip
     async def get_messages():
         """Get latest email messages via IMAP (fully async)"""
+        logger.info(f"Received {request.method} request to /messages from {get_client_ip()}")
+
         params, error, status_code = get_request_params()
         if error:
+            logger.warning(f"Invalid request parameters: {error}")
             return jsonify(error), status_code
+
+        logger.info(f"Request params: server={params['server']}, folder={params['folder']}, limit={params['limit']}, unread_only={params['unread_only']}, gmail_category={params.get('gmail_category')}")
 
         try:
             messages = await fetch_email_messages(
@@ -493,12 +505,13 @@ def register_routes(app):
             if params['gmail_category']:
                 response_data['gmail_category'] = params['gmail_category']
 
+            logger.info(f"Successfully fetched {len(messages)} messages")
             return jsonify(response_data)
 
         except Exception as e:
             error_msg = str(e)
             status_code = 401 if 'authentication' in error_msg.lower() or 'login' in error_msg.lower() else 500
-            logger.error(f"Request failed: {error_msg}")
+            logger.error(f"Request failed with status {status_code}: {error_msg}")
             return jsonify({'error': error_msg}), status_code
 
     @app.route('/health')
@@ -565,10 +578,16 @@ async def startup_init():
 
 # Run startup initialization
 try:
+    logger.info("="*50)
+    logger.info("IMAP Email Reader Starting Up")
+    logger.info("="*50)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(startup_init())
     loop.close()
+    logger.info("="*50)
+    logger.info("Startup Complete - Ready to accept requests")
+    logger.info("="*50)
 except Exception as e:
     logger.error(f"Startup error: {e}")
     logger.warning("Continuing with fallback IPs (localhost only)")
