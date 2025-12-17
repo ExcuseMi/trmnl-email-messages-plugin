@@ -12,16 +12,15 @@ COPY app.py .
 # Expose port
 EXPOSE 5000
 
-# CRITICAL: Set unbuffered output for Docker logs
+# Set Python to unbuffered mode for immediate log output
 ENV PYTHONUNBUFFERED=1
 
-# Run with hypercorn
-# IMPORTANT: Use "app:app" NOT "app:create_app()"
-# The app.py file already creates the app instance at module level
+# Run with hypercorn (ASGI server for async Flask)
+# Single worker for easier debugging
+# Don't set --log-level to preserve our logging format
 CMD ["hypercorn", "app:app", \
      "--bind", "0.0.0.0:5000", \
      "--workers", "1", \
      "--worker-class", "asyncio", \
      "--access-logfile", "-", \
-     "--error-logfile", "-", \
-     "--log-level", "info"]
+     "--error-logfile", "-"]
