@@ -22,7 +22,7 @@ import sys
 # Configuration
 ENABLE_IP_WHITELIST = os.getenv('ENABLE_IP_WHITELIST', 'true').lower() == 'true'
 IP_REFRESH_HOURS = int(os.getenv('IP_REFRESH_HOURS', '24'))
-LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'DEBUG').upper()  # Changed to DEBUG for debugging
 
 # TRMNL API endpoint for IP addresses
 TRMNL_IPS_API = 'https://usetrmnl.com/api/ips'
@@ -525,6 +525,12 @@ def register_routes(app):
 
             if params['gmail_category']:
                 response_data['gmail_category'] = params['gmail_category']
+
+            # Debug: Log first message to verify sender_email is present
+            if messages:
+                print(f"[DEBUG] First message keys: {list(messages[0].keys())}", flush=True)
+                print(f"[DEBUG] First message sender_email: {messages[0].get('sender_email', 'MISSING!')}", flush=True)
+                logger.info(f"First message contains: {messages[0]}")
 
             print(f"[/messages] Successfully fetched {len(messages)} messages", flush=True)
             logger.info(f"Successfully fetched {len(messages)} messages")
