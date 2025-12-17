@@ -22,7 +22,7 @@ import sys
 # Configuration
 ENABLE_IP_WHITELIST = os.getenv('ENABLE_IP_WHITELIST', 'true').lower() == 'true'
 IP_REFRESH_HOURS = int(os.getenv('IP_REFRESH_HOURS', '24'))
-LOG_LEVEL = os.getenv('LOG_LEVEL', 'DEBUG').upper()  # Changed to DEBUG for debugging
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'WARN').upper()
 
 # TRMNL API endpoint for IP addresses
 TRMNL_IPS_API = 'https://usetrmnl.com/api/ips'
