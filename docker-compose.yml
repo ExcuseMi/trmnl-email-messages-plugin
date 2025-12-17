@@ -1,0 +1,23 @@
+services:
+  imap-reader:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: imap-reader
+    ports:
+      - "5005:5000"
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - imap-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  imap-network:
+    driver: bridge
