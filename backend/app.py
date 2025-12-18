@@ -1,55 +1,29 @@
-"""
-Async IMAP Email Reader - Flask Backend for TRMNL
-Optimized version with minimal duplication and maximum performance
-"""
-
-from flask import Flask, request, jsonify
-import aioimaplib
-import email
-from email.header import decode_header
-from email.utils import parsedate_to_datetime, parseaddr
-from datetime import datetime
-import time
-import os
-from functools import wraps
-import asyncio
-import httpx
-import threading
+from flask import Flask, request, send_file, jsonify, abort
+import requests
+from io import BytesIO
+from functools import lru_cache, wraps
+from urllib.parse import quote, unquote
 import logging
-import sys
+import time
+import threading
+from datetime import datetime
+import httpx
+import asyncio
+import os
 
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
 
 # Configuration
 ENABLE_IP_WHITELIST = os.getenv('ENABLE_IP_WHITELIST', 'true').lower() == 'true'
 IP_REFRESH_HOURS = int(os.getenv('IP_REFRESH_HOURS', '24'))
-LOG_LEVEL = os.getenv('LOG_LEVEL', 'DEBUG').upper()  # Changed to DEBUG for debugging
+COMIC_VINE_API_KEY = os.getenv('COMIC_VINE_API_KEY')
 
 # TRMNL API endpoint for IP addresses
 TRMNL_IPS_API = 'https://usetrmnl.com/api/ips'
-
-# Configure logging for Docker/production
-log_handler = logging.StreamHandler(sys.stdout)
-log_handler.setFormatter(logging.Formatter(
-    '%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-))
-
-# Configure root logger with environment variable
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    handlers=[log_handler],
-    force=True
-)
-
-logger = logging.getLogger(__name__)
-logger.info(f"Logging initialized at level: {LOG_LEVEL}")
-
-# Disable Flask's default logger to avoid duplicates
-logging.getLogger('werkzeug').setLevel(logging.WARNING)
-
-# Ensure logs are flushed immediately (important for Docker)
-sys.stdout.reconfigure(line_buffering=True)
-sys.stderr.reconfigure(line_buffering=True)
 
 # Global variables for IP management
 TRMNL_IPS = set()
@@ -59,11 +33,29 @@ last_ip_refresh = None
 # Always allow localhost
 LOCALHOST_IPS = ['127.0.0.1', '::1']
 
+# Create a requests session that persists cookies
+session = requests.Session()
+
+# Rate limiting for API requests (max 1 request per second to avoid triggering Comic Vine's detection)
+api_request_lock = threading.Lock()
+last_api_request_time = 0
+
+def rate_limit_api_request():
+    """Ensure minimum 1 second between API requests"""
+    global last_api_request_time
+    with api_request_lock:
+        current_time = time.time()
+        time_since_last = current_time - last_api_request_time
+        if time_since_last < 1.0:
+            sleep_time = 1.0 - time_since_last
+            logger.info(f"Rate limiting: sleeping for {sleep_time:.2f}s")
+            time.sleep(sleep_time)
+        last_api_request_time = time.time()
+
 
 async def fetch_trmnl_ips():
     """Fetch current TRMNL server IPs from their API"""
     try:
-        print(f"[fetch_trmnl_ips] Fetching from {TRMNL_IPS_API}", flush=True)
         logger.info(f"Fetching TRMNL IPs from {TRMNL_IPS_API}")
 
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -78,16 +70,10 @@ async def fetch_trmnl_ips():
             # Combine into set
             ips = set(ipv4_list + ipv6_list + LOCALHOST_IPS)
 
-            ipv4_count = len(ipv4_list)
-            ipv6_count = len(ipv6_list)
-
-            print(f"[fetch_trmnl_ips] Fetched {len(ips)} IPs ({ipv4_count} IPv4, {ipv6_count} IPv6)", flush=True)
-            logger.info(f"Fetched {len(ips)} TRMNL IPs ({ipv4_count} IPv4, {ipv6_count} IPv6)")
-            logger.debug(f"Whitelisted IPs: {sorted(list(ips))}")
+            logger.info(f"Fetched {len(ips)} TRMNL IPs ({len(ipv4_list)} IPv4, {len(ipv6_list)} IPv6)")
             return ips
 
     except Exception as e:
-        print(f"[fetch_trmnl_ips] ERROR: {e}", flush=True)
         logger.error(f"Failed to fetch TRMNL IPs: {e}")
         logger.warning("IP whitelist will use fallback IPs only")
         return set(LOCALHOST_IPS)
@@ -106,7 +92,7 @@ def update_trmnl_ips_sync():
             with TRMNL_IPS_LOCK:
                 TRMNL_IPS = ips
                 last_ip_refresh = datetime.now()
-            logger.info(f"TRMNL IPs updated successfully at {last_ip_refresh.isoformat()}")
+            logger.info(f"TRMNL IPs updated successfully")
         finally:
             loop.close()
     except Exception as e:
@@ -147,44 +133,25 @@ def get_allowed_ips():
 
 def get_client_ip():
     """Get the real client IP address, accounting for Cloudflare Tunnel"""
-    # Cloudflare Tunnel passes real IP in CF-Connecting-IP header
-    # Priority: CF-Connecting-IP > X-Forwarded-For > X-Real-IP > remote_addr
-
-    # Debug: Log all relevant headers
-    headers_debug = {
-        'CF-Connecting-IP': request.headers.get('CF-Connecting-IP'),
-        'X-Forwarded-For': request.headers.get('X-Forwarded-For'),
-        'X-Real-IP': request.headers.get('X-Real-IP'),
-        'Remote-Addr': request.remote_addr
-    }
-    logger.debug(f"IP detection headers: {headers_debug}")
-
     # Check CF-Connecting-IP FIRST (Cloudflare Tunnel)
     if request.headers.get('CF-Connecting-IP'):
-        ip = request.headers.get('CF-Connecting-IP').strip()
-        logger.debug(f"Using CF-Connecting-IP: {ip}")
-        return ip
+        return request.headers.get('CF-Connecting-IP').strip()
 
     if request.headers.get('X-Forwarded-For'):
-        ip = request.headers.get('X-Forwarded-For').split(',')[0].strip()
-        logger.debug(f"Using X-Forwarded-For: {ip}")
-        return ip
+        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
 
     if request.headers.get('X-Real-IP'):
-        ip = request.headers.get('X-Real-IP').strip()
-        logger.debug(f"Using X-Real-IP: {ip}")
-        return ip
+        return request.headers.get('X-Real-IP').strip()
 
-    logger.debug(f"Using remote_addr: {request.remote_addr}")
     return request.remote_addr
 
 
 def require_whitelisted_ip(f):
     """Decorator to enforce IP whitelisting on routes"""
     @wraps(f)
-    async def decorated_function(*args, **kwargs):
+    def decorated_function(*args, **kwargs):
         if not ENABLE_IP_WHITELIST:
-            return await f(*args, **kwargs)
+            return f(*args, **kwargs)
 
         client_ip = get_client_ip()
         allowed_ips = get_allowed_ips()
@@ -197,549 +164,301 @@ def require_whitelisted_ip(f):
             }), 403
 
         logger.debug(f"Allowed request from whitelisted IP: {client_ip}")
-        return await f(*args, **kwargs)
+        return f(*args, **kwargs)
 
     return decorated_function
 
-
-def create_app():
-    """Application factory for Hypercorn/ASGI servers"""
-    app = Flask(__name__)
-    register_routes(app)
-    return app
-
-
-def decode_mime_header(header):
-    """Decode MIME encoded email headers"""
-    if header is None:
-        return ""
-
-    decoded_parts = decode_header(header)
-    result = []
-
-    for content, encoding in decoded_parts:
-        if isinstance(content, bytes):
-            try:
-                result.append(content.decode(encoding or 'utf-8', errors='ignore'))
-            except:
-                result.append(content.decode('utf-8', errors='ignore'))
-        else:
-            result.append(str(content))
-
-    return ' '.join(result)
-
-
-def extract_sender_name(from_header):
-    """Extract clean sender name from email From header"""
-    if not from_header:
-        return "Unknown"
-
-    decoded = decode_mime_header(from_header)
-
-    if '<' in decoded:
-        name = decoded.split('<')[0].strip().replace('"', '').replace("'", "")
-        return name if name else decoded
-
-    return decoded.strip()
-
-
-def extract_header_data(fetch_response):
-    """Extract header data from IMAP fetch response"""
-    # Method 1: Look for header data in line 1 (most common)
-    if len(fetch_response.lines) > 1:
-        line1 = fetch_response.lines[1]
-        if isinstance(line1, (bytes, bytearray)):
-            header_data = bytes(line1) if isinstance(line1, bytearray) else line1
-            if header_data.endswith(b'\r\n\r\n'):
-                header_data = header_data[:-2]
-            if b'Date:' in header_data or b'From:' in header_data:
-                return header_data
-
-    # Method 2: Search all lines for header data
-    for line in fetch_response.lines:
-        if isinstance(line, (bytes, bytearray)):
-            line_bytes = bytes(line) if isinstance(line, bytearray) else line
-            if b'Date:' in line_bytes or b'From:' in line_bytes:
-                if line_bytes.endswith(b'\r\n\r\n'):
-                    line_bytes = line_bytes[:-2]
-                return line_bytes
-
-    return None
-
-
-def parse_message_data(header_data, msg_id, is_read=True, is_flagged=False):
-    """Parse header data into message dict"""
-    try:
-        email_message = email.message_from_bytes(header_data)
-    except Exception as e:
-        logger.error(f"Failed to parse email message {msg_id}: {e}")
-        return None
-
-    # Extract fields
-    from_header = email_message.get('From', '')
-    sender = extract_sender_name(from_header)
-    subject = decode_mime_header(email_message.get('Subject', 'No Subject'))
-    date_str = email_message.get('Date', '')
-
-    # Extract sender email using parseaddr (more reliable)
-    sender_email = ""
-    if from_header:
-        decoded_from = decode_mime_header(from_header)
-        # parseaddr returns (name, email) tuple
-        _, email_addr = parseaddr(decoded_from)
-        sender_email = email_addr if email_addr else ""
-        logger.debug(f"Message {msg_id}: From header='{from_header}' -> sender='{sender}', email='{sender_email}'")
-    else:
-        logger.warning(f"Message {msg_id}: No From header found!")
-
-    # Parse timestamp
-    try:
-        if date_str:
-            timestamp = parsedate_to_datetime(date_str)
-            timestamp_iso = timestamp.isoformat()
-        else:
-            timestamp_iso = datetime.now().isoformat()
-    except Exception:
-        timestamp_iso = datetime.now().isoformat()
-
-    message_dict = {
-        'sender': sender,
-        'sender_email': sender_email,
-        'subject': subject,
-        'timestamp': timestamp_iso,
-        'msg_id': msg_id,
-        'read': is_read,
-        'flagged': is_flagged
+# Cache images for 1 hour (maxsize=200 means ~200 different images cached)
+@lru_cache(maxsize=200)
+def fetch_comic_vine_image(url, use_proxy=True):
+    """Fetch and cache Comic Vine images with proper headers"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br, zstd',
+        'Referer': 'https://comicvine.gamespot.com/',
+        'Sec-Ch-Ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'image',
+        'Sec-Fetch-Mode': 'no-cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
     }
 
-    # Log the final message dict to verify sender_email is included
-    logger.debug(f"Created message dict: {message_dict}")
-
-    return message_dict
-
-
-async def batch_fetch_flags(client, message_ids):
-    """Fetch flags for all messages in one batch request"""
-    flags_dict = {}
-    try:
-        msg_id_str = ','.join(message_ids)
-        flags_response = await client.fetch(msg_id_str, '(FLAGS)')
-
-        if flags_response.result == 'OK':
-            for line in flags_response.lines:
-                if isinstance(line, (bytes, bytearray)):
-                    line_bytes = bytes(line) if isinstance(line, bytearray) else line
-                    try:
-                        line_str = line_bytes.decode('utf-8', errors='ignore')
-                        if ' FETCH ' in line_str:
-                            parts = line_str.split(' FETCH ', 1)
-                            msg_id = parts[0].strip()
-                            flags_str = parts[1]
-
-                            # Check for flags
-                            is_read = '\\Seen' in flags_str
-                            is_flagged = '\\Flagged' in flags_str
-
-                            flags_dict[msg_id] = {
-                                'read': is_read,
-                                'flagged': is_flagged
-                            }
-                    except:
-                        pass
-    except Exception as e:
-        logger.warning(f"Could not fetch flags in batch: {e}")
-
-    return flags_dict
-
-
-async def fetch_email_messages(server, port, username, password, folder, limit, unread_only, gmail_category=None, from_emails=None, flagged_only=False):
-    """
-    Optimized async IMAP fetch with batch flag fetching
-
-    Args:
-        gmail_category: Gmail category/tab filter (Primary, Social, Promotions, Updates, Forums)
-        from_emails: List of sender email addresses to filter by (OR logic)
-        flagged_only: Only fetch flagged/starred emails (IMAP \Flagged flag)
-    """
-    client = None
-    try:
-        start_time = time.time()
-        logger.info(f"Fetching emails from {server}:{port} folder={folder} limit={limit} unread_only={unread_only} flagged_only={flagged_only}")
-
-        # Create async IMAP client with longer timeout for large fetches
-        client = aioimaplib.IMAP4_SSL(host=server, port=port, timeout=60)
-        await client.wait_hello_from_server()
-
-        # Login
-        login_response = await client.login(username, password)
-        if login_response.result != 'OK':
-            raise Exception(f'Login failed: {login_response.lines}')
-        logger.debug(f"Successfully logged in to {server}")
-
-        # Select folder
-        select_response = await client.select(folder)
-        if select_response.result != 'OK':
-            raise Exception(f'Failed to select folder {folder}: {select_response.lines}')
-
-        # Build search criteria
-        search_parts = []
-
-        # Handle Gmail categories (special case)
-        if gmail_category:
-            category_map = {
-                'primary': 'CATEGORY PERSONAL',
-                'social': 'CATEGORY SOCIAL',
-                'promotions': 'CATEGORY PROMOTIONS',
-                'updates': 'CATEGORY UPDATES',
-                'forums': 'CATEGORY FORUMS'
+    # Optional: Use a proxy if configured
+    # Set these environment variables or hardcode your proxy
+    proxies = None
+    if use_proxy:
+        import os
+        proxy_url = os.environ.get('HTTP_PROXY') or os.environ.get('HTTPS_PROXY')
+        if proxy_url:
+            proxies = {
+                'http': proxy_url,
+                'https': proxy_url
             }
+            logger.info(f"Using proxy for request")
 
-            category_label = category_map.get(gmail_category.lower())
-            if not category_label:
-                raise Exception(f'Invalid Gmail category: {gmail_category}. Valid: Primary, Social, Promotions, Updates, Forums')
+    try:
+        logger.info(f"Fetching image: {url}")
+        response = session.get(url, headers=headers, proxies=proxies, timeout=15, allow_redirects=True)
+        response.raise_for_status()
+        logger.info(f"Successfully fetched image: {url} ({len(response.content)} bytes)")
+        return response.content
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"HTTP error fetching {url}: {e.response.status_code} - {e.response.reason}")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request failed for {url}: {type(e).__name__} - {str(e)}")
+        return None
 
-            # Gmail uses X-GM-RAW for complex queries
-            gmail_parts = [f'category:{gmail_category.lower()}']
-            if unread_only:
-                gmail_parts.append('is:unread')
-            if flagged_only:
-                gmail_parts.append('is:starred')  # Gmail starred = IMAP flagged
+@app.route('/image')
+@app.route('/comic-book-covers/image')
+@require_whitelisted_ip
+def proxy_image():
+    """Proxy Comic Vine images to avoid hotlinking protection"""
+    url = request.args.get('url')
 
-            # Add from_emails to Gmail search
-            if from_emails and len(from_emails) > 0:
-                logger.info(f"Filtering by senders: {from_emails}")
-                # Gmail syntax: from:email1 OR from:email2
-                if len(from_emails) == 1:
-                    gmail_parts.append(f'from:{from_emails[0]}')
-                else:
-                    # Build OR query for multiple senders
-                    from_query = ' OR '.join([f'from:{email}' for email in from_emails])
-                    gmail_parts.append(f'({from_query})')
+    if not url:
+        logger.warning("Missing url parameter")
+        abort(400, 'Missing url parameter')
 
-            search_criteria = f'X-GM-RAW "{" ".join(gmail_parts)}"'
-            logger.info(f"Using Gmail search criteria: {search_criteria}")
+    # Decode if URL encoded
+    url = unquote(url)
+
+    logger.info(f"Decoded image URL: {url}")
+
+    # Security check - prevent infinite loops by rejecting self-referencing URLs
+    if 'trmnl.bettens.dev' in url or request.host in url:
+        logger.error(f"Rejected self-referencing URL: {url}")
+        abort(400, 'Cannot proxy images from this server (infinite loop detected)')
+
+    # Security check - URL must be a valid Comic Vine image URL
+    # Check that it starts with Comic Vine domain (not just contains it in query params)
+    if not url.startswith('https://comicvine.gamespot.com/') and not url.startswith('http://comicvine.gamespot.com/'):
+        logger.warning(f"Invalid URL - must start with Comic Vine domain: {url}")
+        abort(400, 'Invalid URL - only Comic Vine images allowed')
+
+    # Additional validation - must be from their CDN path
+    if '/a/uploads/' not in url:
+        logger.warning(f"Invalid URL - not a Comic Vine image path: {url}")
+        abort(400, 'Invalid URL - must be a Comic Vine image')
+
+    content = fetch_comic_vine_image(url)
+
+    if content is None:
+        logger.error(f"Image not found: {url}")
+        abort(404, 'Image not found')
+
+    # Determine content type from URL
+    content_type = 'image/jpeg'
+    if url.lower().endswith('.png'):
+        content_type = 'image/png'
+    elif url.lower().endswith('.webp'):
+        content_type = 'image/webp'
+
+    return send_file(
+        BytesIO(content),
+        mimetype=content_type,
+        as_attachment=False,
+        download_name='cover.jpg'
+    )
+
+@app.route('/api/issues')
+@app.route('/comic-book-covers/api/issues')
+@require_whitelisted_ip
+def proxy_issues():
+    """
+    Proxy Comic Vine API and rewrite image URLs to use our proxy
+    This endpoint replaces direct Comic Vine API calls in TRMNL
+    """
+    # Get all query params and forward to Comic Vine
+    params = dict(request.args)
+
+    # Inject API key from environment if not provided
+    import os
+    if 'api_key' not in params or not params['api_key']:
+        env_api_key = os.environ.get('COMIC_VINE_API_KEY')
+        if env_api_key:
+            params['api_key'] = env_api_key
+            logger.info("Using API key from environment variable")
         else:
-            # Standard IMAP search
-            if unread_only:
-                search_parts.append('UNSEEN')
-            if flagged_only:
-                search_parts.append('FLAGGED')
+            logger.warning("No API key provided in request or environment")
 
-            # Filter by sender emails (OR logic)
-            if from_emails and len(from_emails) > 0:
-                logger.info(f"Filtering by senders: {from_emails}")
-                # IMAP OR syntax: OR (FROM "email1") (FROM "email2")
-                if len(from_emails) == 1:
-                    search_parts.append(f'FROM "{from_emails[0]}"')
-                else:
-                    # Build nested OR for multiple senders
-                    # OR (FROM "a") (FROM "b") for 2 senders
-                    # OR (OR (FROM "a") (FROM "b")) (FROM "c") for 3+ senders
-                    or_query = f'FROM "{from_emails[0]}"'
-                    for email_addr in from_emails[1:]:
-                        or_query = f'OR ({or_query}) (FROM "{email_addr}")'
-                    search_parts.append(or_query)
+    logger.info(f"Proxying API request with params: {params}")
 
-            if not search_parts:
-                search_parts.append('ALL')
+    # Rate limit to avoid triggering Comic Vine's anti-bot measures
+    rate_limit_api_request()
 
-            search_criteria = ' '.join(search_parts)
-            logger.info(f"Using IMAP search criteria: {search_criteria}")
+    # Add headers for API requests (different from image requests)
+    # Note: Don't manually specify Accept-Encoding - let requests handle it
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/html, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://comicvine.gamespot.com/',
+    }
 
-        search_response = await client.search(search_criteria)
+    # Get proxy settings if configured
+    import os
+    proxies = None
+    proxy_url = os.environ.get('HTTP_PROXY') or os.environ.get('HTTPS_PROXY')
+    if proxy_url:
+        proxies = {'http': proxy_url, 'https': proxy_url}
+        logger.info("Using proxy for API request")
 
-        if search_response.result != 'OK':
-            raise Exception(f'Failed to search messages: {search_response.lines}')
+    try:
+        # Use requests.get directly (not session) to avoid cookie interference
+        response = requests.get(
+            'https://comicvine.gamespot.com/api/issues',
+            params=params,
+            headers=headers,
+            proxies=proxies,
+            timeout=20,
+            allow_redirects=True
+        )
 
-        # Get and validate message IDs
-        if not search_response.lines:
-            logger.info("No messages found")
-            return []
+        logger.info(f"API response status: {response.status_code}")
+        logger.info(f"API response content-type: {response.headers.get('content-type')}")
+        logger.info(f"API response content-encoding: {response.headers.get('content-encoding')}")
 
-        message_ids_text = search_response.lines[0].decode('utf-8', errors='ignore').strip()
-        if not message_ids_text:
-            logger.info("No messages found")
-            return []
-
-        message_ids = message_ids_text.split()
-        if not message_ids:
-            logger.info("No messages found")
-            return []
-
-        # Reverse for latest first and limit
-        message_ids.reverse()
-        message_ids = message_ids[:limit]
-
-        logger.info(f"Found {len(message_ids)} messages to fetch")
-
-        # OPTIMIZATION: Batch fetch all flags first
-        flags_dict = await batch_fetch_flags(client, message_ids)
-
-        messages = []
-
-        # Fetch messages sequentially (IMAP protocol limitation - can't parallelize on same connection)
-        for msg_id in message_ids:
-            try:
-                fetch_response = await client.fetch(
-                    msg_id,
-                    '(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])'
-                )
-
-                if fetch_response.result != 'OK':
-                    continue
-
-                header_data = extract_header_data(fetch_response)
-                if not header_data:
-                    continue
-
-                # Get flags from batch fetch
-                flags = flags_dict.get(msg_id, {'read': True, 'flagged': False})
-                is_read = flags['read']
-                is_flagged = flags['flagged']
-
-                message = parse_message_data(header_data, msg_id, is_read, is_flagged)
-                if message:
-                    messages.append(message)
-
-            except Exception as e:
-                logger.error(f"Error processing message {msg_id}: {e}")
-                continue
-
-        end_time = time.time()
-        logger.info(f"Fetched {len(messages)} messages in {end_time - start_time:.2f} seconds")
-
-        return messages
-
-    except aioimaplib.aioimaplib.Abort as e:
-        # Protocol state error - connection got confused
-        logger.error(f"IMAP protocol error (Abort): {e}")
-        raise Exception(f"IMAP protocol error - connection state corrupted. Try refreshing.")
-    except aioimaplib.AioImapException as e:
-        logger.error(f"IMAP error: {e}")
-        raise Exception(f"IMAP error: {str(e)}")
-    except asyncio.TimeoutError:
-        logger.error("IMAP operation timed out")
-        raise Exception("Connection timed out - server may be slow or unresponsive")
-    except Exception as e:
-        logger.error(f"Error fetching messages: {e}")
-        raise Exception(f"Error fetching messages: {str(e)}")
-    finally:
-        if client:
-            try:
-                await client.close()
-                await client.logout()
-            except:
-                pass
-
-
-def get_request_params():
-    """Extract and validate request parameters from GET or POST"""
-    if request.method == 'POST':
-        data = request.json
-    else:
-        data = request.args
-
-    server = data.get('server')
-    username = data.get('username')
-    password = data.get('password')
-
-    if not all([server, username, password]):
-        return None, {
-            'error': 'Missing required parameters',
-            'required': ['server', 'username', 'password']
-        }, 400
-
-    port = int(data.get('port', 993))
-    folder = data.get('folder', 'INBOX')
-    limit = min(int(data.get('limit', 10)), 50)
-    gmail_category = data.get('gmail_category')
-
-    unread_only = data.get('unread_only', False)
-    if isinstance(unread_only, str):
-        unread_only = unread_only.lower() == 'true'
-
-    flagged_only = data.get('flagged_only', False)
-    if isinstance(flagged_only, str):
-        flagged_only = flagged_only.lower() == 'true'
-
-    # Parse from_emails - can be comma-separated string or array
-    from_emails = data.get('from_emails')
-    if from_emails:
-        if isinstance(from_emails, str):
-            # Split by comma and clean whitespace
-            from_emails = [email.strip() for email in from_emails.split(',') if email.strip()]
-        elif isinstance(from_emails, list):
-            from_emails = [email.strip() for email in from_emails if isinstance(email, str) and email.strip()]
-        else:
-            from_emails = []
-    else:
-        from_emails = []
-
-    return {
-        'server': server,
-        'port': port,
-        'username': username,
-        'password': password,
-        'folder': folder,
-        'limit': limit,
-        'unread_only': unread_only,
-        'flagged_only': flagged_only,
-        'gmail_category': gmail_category,
-        'from_emails': from_emails
-    }, None, None
-
-
-def register_routes(app):
-    """Register all Flask routes"""
-
-    @app.route('/messages', methods=['GET', 'POST'])
-    @require_whitelisted_ip
-    async def get_messages():
-        """Get latest email messages via IMAP (fully async)"""
-        print(f"[/messages] Received {request.method} request", flush=True)
-        logger.info(f"Received {request.method} request to /messages from {get_client_ip()}")
-
-        params, error, status_code = get_request_params()
-        if error:
-            logger.warning(f"Invalid request parameters: {error}")
-            return jsonify(error), status_code
-
-        print(f"[/messages] Params: server={params['server']}, folder={params['folder']}", flush=True)
-        logger.info(f"Request params: server={params['server']}, folder={params['folder']}, limit={params['limit']}, unread_only={params['unread_only']}, flagged_only={params['flagged_only']}, gmail_category={params.get('gmail_category')}, from_emails={params.get('from_emails')}")
+        response.raise_for_status()
 
         try:
-            messages = await fetch_email_messages(
-                params['server'],
-                params['port'],
-                params['username'],
-                params['password'],
-                params['folder'],
-                params['limit'],
-                params['unread_only'],
-                params['gmail_category'],
-                params['from_emails'],
-                params['flagged_only']
-            )
+            # Use .json() directly - it handles decompression automatically
+            data = response.json()
+            logger.info(f"Successfully parsed JSON response with {len(data.get('results', []))} results")
+        except ValueError as e:
+            # Only access .text if JSON parsing fails (for debugging)
+            logger.error(f"Failed to parse JSON. Status: {response.status_code}")
+            logger.error(f"Content-Encoding: {response.headers.get('content-encoding')}")
+            logger.error(f"Content-Type: {response.headers.get('content-type')}")
+            logger.error(f"Response text preview: {response.text[:500]}")
+            abort(500, f'Comic Vine returned invalid JSON: {str(e)}')
 
-            response_data = {
-                'success': True,
-                'folder': params['folder'],
-                'count': len(messages),
-                'unread_only': params['unread_only'],
-                'flagged_only': params['flagged_only'],
-                'messages': messages,
-                'fetched_at': datetime.now().isoformat()
-            }
+        # Get the base URL for this request
+        # Use the full scheme + host, then construct the correct path
+        # request.url_root gives us "https://trmnl.bettens.dev/"
+        # We need to add "comic-book-covers" to make image URLs work
+        scheme = request.scheme
+        host = request.host
+        base_url = f"{scheme}://{host}/comic-book-covers"
 
-            if params['gmail_category']:
-                response_data['gmail_category'] = params['gmail_category']
+        logger.debug(f"Base URL for image rewriting: {base_url}")
 
-            if params['from_emails']:
-                response_data['from_emails'] = params['from_emails']
+        # Rewrite image URLs in the response
+        if 'results' in data:
+            for comic in data['results']:
+                if 'image' in comic and comic['image']:
+                    for key in ['small_url', 'medium_url', 'screen_url', 'original_url',
+                               'icon_url', 'tiny_url', 'thumb_url', 'super_url']:
+                        if key in comic['image'] and comic['image'][key]:
+                            original = comic['image'][key]
 
-            # Debug: Log first message to verify sender_email is present
-            if messages:
-                print(f"[DEBUG] First message keys: {list(messages[0].keys())}", flush=True)
-                print(f"[DEBUG] First message sender_email: {messages[0].get('sender_email', 'MISSING!')}", flush=True)
-                logger.info(f"First message contains: {messages[0]}")
+                            # Skip if already rewritten (contains our proxy URL)
+                            if base_url in original or 'trmnl.bettens.dev' in original:
+                                logger.debug(f"Skipping already proxied URL: {original}")
+                                continue
 
-            print(f"[/messages] Successfully fetched {len(messages)} messages", flush=True)
-            logger.info(f"Successfully fetched {len(messages)} messages")
-            return jsonify(response_data)
+                            # Only rewrite actual Comic Vine URLs
+                            if 'comicvine.gamespot.com' in original:
+                                # Rewrite to use our proxy with full path
+                                comic['image'][key] = f"{base_url}/comic-book-covers/image?url={quote(original)}"
 
-        except Exception as e:
-            error_msg = str(e)
-            status_code = 401 if 'authentication' in error_msg.lower() or 'login' in error_msg.lower() else 500
-            print(f"[/messages] ERROR: {error_msg}", flush=True)
-            logger.error(f"Request failed with status {status_code}: {error_msg}")
-            return jsonify({'error': error_msg}), status_code
+            logger.info(f"Proxied {len(data['results'])} results with rewritten image URLs")
 
-    @app.route('/health')
-    def health():
-        """Health check endpoint"""
-        client_ip = get_client_ip()
-        allowed_ips = get_allowed_ips()
-        is_whitelisted = client_ip in allowed_ips if ENABLE_IP_WHITELIST else True
+        return jsonify(data)
 
-        health_data = {
-            'status': 'healthy',
-            'service': 'imap-email-reader',
-            'version': '12.2-docker-logging',
-            'python': '3.13',
-            'flask': 'async',
-            'timestamp': datetime.now().isoformat()
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 403:
+            logger.warning(f"Comic Vine returned 403 - they may be blocking this server's IP")
+            logger.warning("Falling back to passthrough mode - API works but images won't be proxied")
+
+            # Return error with helpful message
+            return jsonify({
+                'error': 'Comic Vine API blocking detected',
+                'message': 'Comic Vine is blocking API requests from this server. You have two options:',
+                'options': [
+                    '1. Use Comic Vine API directly (images still won\'t load in TRMNL)',
+                    '2. Try using a VPN or different server IP',
+                    '3. Contact Comic Vine to whitelist your server IP'
+                ],
+                'suggestion': 'Your server IP may be flagged. Try deploying from a residential IP or different cloud provider.',
+                'your_ip': request.remote_addr
+            }), 403
+        else:
+            raise
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error proxying API: {e}")
+        abort(500, f'Error proxying Comic Vine API: {str(e)}')
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        abort(500, f'Unexpected error: {str(e)}')
+
+@app.route('/health')
+def health():
+    """Health check endpoint"""
+    client_ip = get_client_ip()
+    allowed_ips = get_allowed_ips()
+    is_whitelisted = client_ip in allowed_ips if ENABLE_IP_WHITELIST else True
+
+    health_data = {
+        'status': 'ok',
+        'service': 'comic-vine-proxy',
+        'timestamp': datetime.now().isoformat()
+    }
+
+    if ENABLE_IP_WHITELIST:
+        with TRMNL_IPS_LOCK:
+            trmnl_count = len(TRMNL_IPS)
+            last_refresh = last_ip_refresh.isoformat() if last_ip_refresh else None
+
+        health_data['ip_whitelist'] = {
+            'enabled': True,
+            'your_ip': client_ip,
+            'whitelisted': is_whitelisted,
+            'ips_loaded': trmnl_count,
+            'last_refresh': last_refresh,
+            'refresh_interval_hours': IP_REFRESH_HOURS
+        }
+    else:
+        health_data['ip_whitelist'] = {
+            'enabled': False,
+            'your_ip': client_ip
         }
 
-        if ENABLE_IP_WHITELIST:
-            with TRMNL_IPS_LOCK:
-                trmnl_count = len(TRMNL_IPS)
-                last_refresh = last_ip_refresh.isoformat() if last_ip_refresh else None
+    if COMIC_VINE_API_KEY:
+        health_data['api_key_configured'] = True
 
-            health_data['ip_whitelist'] = {
-                'enabled': True,
-                'your_ip': client_ip,
-                'whitelisted': is_whitelisted,
-                'ips_loaded': trmnl_count,
-                'last_refresh': last_refresh,
-                'refresh_interval_hours': IP_REFRESH_HOURS
-            }
-        else:
-            health_data['ip_whitelist'] = {
-                'enabled': False,
-                'your_ip': client_ip
-            }
+    return jsonify(health_data)
 
-        return jsonify(health_data)
+@app.route('/')
+def index():
+    """Root endpoint with usage info"""
+    return jsonify({
+        'service': 'Comic Vine Image Proxy',
+        'endpoints': {
+            '/comic-book-covers/api/issues': 'Proxy Comic Vine API with image URL rewriting',
+            '/image?url=<url>': 'Proxy individual Comic Vine images',
+            '/health': 'Health check'
+        },
+        'usage': 'Update your TRMNL plugin to use https://your-domain/comic-book-covers/api/issues instead of Comic Vine API directly'
+    })
 
-    @app.route('/test-logging')
-    def test_logging():
-        """Test endpoint to verify logging is working"""
-        logger.debug("🐛 DEBUG: Test debug message")
-        logger.info("ℹ️  INFO: Test info message")
-        logger.warning("⚠️  WARNING: Test warning message")
-        logger.error("❌ ERROR: Test error message")
-
-        # Direct stdout/stderr test
-        print("DIRECT STDOUT: Print test", flush=True)
-        print("DIRECT STDERR: Stderr test", file=sys.stderr, flush=True)
-
-        return jsonify({
-            'status': 'ok',
-            'message': 'Check your logs - you should see 4 log messages + 2 print statements',
-            'config': {
-                'pythonunbuffered': os.getenv('PYTHONUNBUFFERED'),
-                'log_level': LOG_LEVEL,
-                'stdout_line_buffering': sys.stdout.line_buffering,
-                'stderr_line_buffering': sys.stderr.line_buffering
-            }
-        })
-
-
-# Create app instance
-app = create_app()
-
-# Print immediately to confirm app is loading
-print("=" * 60, flush=True)
-print("IMAP Email Reader - Module Loading", flush=True)
-print(f"Python: {sys.version}", flush=True)
-print(f"PYTHONUNBUFFERED: {os.getenv('PYTHONUNBUFFERED')}", flush=True)
-print(f"LOG_LEVEL: {LOG_LEVEL}", flush=True)
-print("=" * 60, flush=True)
-
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
 
 # Initialize TRMNL IPs on startup
 async def startup_init():
     """Initialize TRMNL IPs on startup"""
     global TRMNL_IPS, last_ip_refresh
 
-    print("=" * 60, flush=True)
-    print("Running startup_init()", flush=True)
-    print("=" * 60, flush=True)
-
     logger.info("=" * 60)
-    logger.info("Starting IMAP Email Reader")
+    logger.info("Starting Comic Vine Proxy")
     logger.info(f"IP Whitelist: {'Enabled' if ENABLE_IP_WHITELIST else 'Disabled'}")
-    logger.info(f"Refresh Interval: {IP_REFRESH_HOURS} hours")
+    logger.info(f"API Key: {'Configured' if COMIC_VINE_API_KEY else 'Not configured'}")
 
     if ENABLE_IP_WHITELIST:
         ips = await fetch_trmnl_ips()
@@ -751,24 +470,16 @@ async def startup_init():
     else:
         logger.warning("IP whitelist is disabled - all IPs will be allowed!")
 
-    logger.info("=" * 60)
     logger.info("Startup Complete - Ready to accept requests")
     logger.info("=" * 60)
 
 
 # Run startup initialization
 try:
-    print("About to run startup initialization...", flush=True)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(startup_init())
     loop.close()
-    print("Startup initialization complete!", flush=True)
 except Exception as e:
-    print(f"ERROR in startup: {e}", flush=True)
     logger.error(f"Startup error: {e}")
     logger.warning("Continuing with fallback IPs (localhost only)")
-
-
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
