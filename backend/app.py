@@ -405,6 +405,17 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
             if flagged_only:
                 gmail_parts.append('is:starred')  # Gmail uses "starred" for flagged
 
+            # Add from_emails to Gmail search
+            if from_emails and len(from_emails) > 0:
+                logger.info(f"Filtering by senders: {from_emails}")
+                # Gmail syntax: from:email1 OR from:email2
+                if len(from_emails) == 1:
+                    gmail_parts.append(f'from:{from_emails[0]}')
+                else:
+                    # Build OR query for multiple senders
+                    from_query = ' OR '.join([f'from:{email}' for email in from_emails])
+                    gmail_parts.append(f'({from_query})')
+
             search_criteria = f'X-GM-RAW "{" ".join(gmail_parts)}"'
             logger.info(f"Using Gmail search criteria: {search_criteria}")
         else:
