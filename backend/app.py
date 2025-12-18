@@ -22,7 +22,7 @@ import sys
 # Configuration
 ENABLE_IP_WHITELIST = os.getenv('ENABLE_IP_WHITELIST', 'true').lower() == 'true'
 IP_REFRESH_HOURS = int(os.getenv('IP_REFRESH_HOURS', '24'))
-LOG_LEVEL = os.getenv('LOG_LEVEL', 'WARN').upper()
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'DEBUG').upper()  # Changed to DEBUG for debugging
 
 # TRMNL API endpoint for IP addresses
 TRMNL_IPS_API = 'https://usetrmnl.com/api/ips'
@@ -406,7 +406,7 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
                 gmail_parts.append('is:starred')  # Gmail uses "starred" for flagged
 
             search_criteria = f'X-GM-RAW "{" ".join(gmail_parts)}"'
-            logger.debug(f"Using Gmail search criteria: {search_criteria}")
+            logger.info(f"Using Gmail search criteria: {search_criteria}")
         else:
             # Standard IMAP search
             if unread_only:
@@ -416,6 +416,7 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
 
             # Filter by sender emails (OR logic)
             if from_emails and len(from_emails) > 0:
+                logger.info(f"Filtering by senders: {from_emails}")
                 # IMAP OR syntax: OR (FROM "email1") (FROM "email2")
                 if len(from_emails) == 1:
                     search_parts.append(f'FROM "{from_emails[0]}"')
@@ -432,7 +433,7 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
                 search_parts.append('ALL')
 
             search_criteria = ' '.join(search_parts)
-            logger.debug(f"Using search criteria: {search_criteria}")
+            logger.info(f"Using IMAP search criteria: {search_criteria}")
 
         search_response = await client.search(search_criteria)
 
