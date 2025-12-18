@@ -108,6 +108,11 @@ def fetch_trmnl_ips():
         response.raise_for_status()
 
         ip_data = response.json()
+
+        # Handle both formats: {"data": {"ipv4": [], "ipv6": []}} or {"ipv4": [], "ipv6": []}
+        if 'data' in ip_data:
+            ip_data = ip_data['data']
+
         new_ips = set()
 
         ipv4_list = ip_data.get('ipv4', [])
