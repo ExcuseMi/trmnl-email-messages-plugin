@@ -267,7 +267,7 @@ def extract_header_data(fetch_response):
     return None
 
 
-def parse_message_data(header_data, msg_id, is_read=True):
+def parse_message_data(header_data, msg_id, is_read=True, is_flagged=False):
     """Parse header data into message dict"""
     try:
         email_message = email.message_from_bytes(header_data)
@@ -308,7 +308,8 @@ def parse_message_data(header_data, msg_id, is_read=True):
         'subject': subject,
         'timestamp': timestamp_iso,
         'msg_id': msg_id,
-        'read': is_read
+        'read': is_read,
+        'flagged': is_flagged
     }
 
     # Log the final message dict to verify sender_email is included
@@ -333,8 +334,16 @@ async def batch_fetch_flags(client, message_ids):
                         if ' FETCH ' in line_str:
                             parts = line_str.split(' FETCH ', 1)
                             msg_id = parts[0].strip()
-                            is_read = '\\Seen' in parts[1]
-                            flags_dict[msg_id] = is_read
+                            flags_str = parts[1]
+
+                            # Check for flags
+                            is_read = '\\Seen' in flags_str
+                            is_flagged = '\\Flagged' in flags_str
+
+                            flags_dict[msg_id] = {
+                                'read': is_read,
+                                'flagged': is_flagged
+                            }
                     except:
                         pass
     except Exception as e:
@@ -343,17 +352,19 @@ async def batch_fetch_flags(client, message_ids):
     return flags_dict
 
 
-async def fetch_email_messages(server, port, username, password, folder, limit, unread_only, gmail_category=None):
+async def fetch_email_messages(server, port, username, password, folder, limit, unread_only, gmail_category=None, from_emails=None, flagged_only=False):
     """
     Optimized async IMAP fetch with batch flag fetching
 
     Args:
         gmail_category: Gmail category/tab filter (Primary, Social, Promotions, Updates, Forums)
+        from_emails: List of sender email addresses to filter by (OR logic)
+        flagged_only: Only fetch flagged/important emails
     """
     client = None
     try:
         start_time = time.time()
-        logger.info(f"Fetching emails from {server}:{port} folder={folder} limit={limit} unread_only={unread_only}")
+        logger.info(f"Fetching emails from {server}:{port} folder={folder} limit={limit} unread_only={unread_only} flagged_only={flagged_only}")
 
         # Create async IMAP client
         client = aioimaplib.IMAP4_SSL(host=server, port=port, timeout=30)
@@ -370,7 +381,10 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
         if select_response.result != 'OK':
             raise Exception(f'Failed to select folder {folder}: {select_response.lines}')
 
-        # Search for messages
+        # Build search criteria
+        search_parts = []
+
+        # Handle Gmail categories (special case)
         if gmail_category:
             category_map = {
                 'primary': 'CATEGORY PERSONAL',
@@ -384,14 +398,41 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
             if not category_label:
                 raise Exception(f'Invalid Gmail category: {gmail_category}. Valid: Primary, Social, Promotions, Updates, Forums')
 
+            # Gmail uses X-GM-RAW for complex queries
+            gmail_parts = [f'category:{gmail_category.lower()}']
             if unread_only:
-                search_criteria = f'X-GM-RAW "category:{gmail_category.lower()} is:unread"'
-            else:
-                search_criteria = f'X-GM-RAW "category:{gmail_category.lower()}"'
+                gmail_parts.append('is:unread')
+            if flagged_only:
+                gmail_parts.append('is:starred')  # Gmail uses "starred" for flagged
 
-            logger.debug(f"Using search criteria: {search_criteria}")
+            search_criteria = f'X-GM-RAW "{" ".join(gmail_parts)}"'
+            logger.debug(f"Using Gmail search criteria: {search_criteria}")
         else:
-            search_criteria = 'UNSEEN' if unread_only else 'ALL'
+            # Standard IMAP search
+            if unread_only:
+                search_parts.append('UNSEEN')
+            if flagged_only:
+                search_parts.append('FLAGGED')
+
+            # Filter by sender emails (OR logic)
+            if from_emails and len(from_emails) > 0:
+                # IMAP OR syntax: OR (FROM "email1") (FROM "email2")
+                if len(from_emails) == 1:
+                    search_parts.append(f'FROM "{from_emails[0]}"')
+                else:
+                    # Build nested OR for multiple senders
+                    # OR (FROM "a") (FROM "b") for 2 senders
+                    # OR (OR (FROM "a") (FROM "b")) (FROM "c") for 3+ senders
+                    or_query = f'FROM "{from_emails[0]}"'
+                    for email_addr in from_emails[1:]:
+                        or_query = f'OR ({or_query}) (FROM "{email_addr}")'
+                    search_parts.append(or_query)
+
+            if not search_parts:
+                search_parts.append('ALL')
+
+            search_criteria = ' '.join(search_parts)
+            logger.debug(f"Using search criteria: {search_criteria}")
 
         search_response = await client.search(search_criteria)
 
@@ -439,9 +480,12 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
                 if not header_data:
                     continue
 
-                is_read = flags_dict.get(msg_id, True)
+                # Get flags from batch fetch
+                flags = flags_dict.get(msg_id, {'read': True, 'flagged': False})
+                is_read = flags['read']
+                is_flagged = flags['flagged']
 
-                message = parse_message_data(header_data, msg_id, is_read)
+                message = parse_message_data(header_data, msg_id, is_read, is_flagged)
                 if message:
                     messages.append(message)
 
@@ -495,6 +539,23 @@ def get_request_params():
     if isinstance(unread_only, str):
         unread_only = unread_only.lower() == 'true'
 
+    flagged_only = data.get('flagged_only', False)
+    if isinstance(flagged_only, str):
+        flagged_only = flagged_only.lower() == 'true'
+
+    # Parse from_emails - can be comma-separated string or array
+    from_emails = data.get('from_emails')
+    if from_emails:
+        if isinstance(from_emails, str):
+            # Split by comma and clean whitespace
+            from_emails = [email.strip() for email in from_emails.split(',') if email.strip()]
+        elif isinstance(from_emails, list):
+            from_emails = [email.strip() for email in from_emails if isinstance(email, str) and email.strip()]
+        else:
+            from_emails = []
+    else:
+        from_emails = []
+
     return {
         'server': server,
         'port': port,
@@ -503,7 +564,9 @@ def get_request_params():
         'folder': folder,
         'limit': limit,
         'unread_only': unread_only,
-        'gmail_category': gmail_category
+        'flagged_only': flagged_only,
+        'gmail_category': gmail_category,
+        'from_emails': from_emails
     }, None, None
 
 
@@ -523,7 +586,7 @@ def register_routes(app):
             return jsonify(error), status_code
 
         print(f"[/messages] Params: server={params['server']}, folder={params['folder']}", flush=True)
-        logger.info(f"Request params: server={params['server']}, folder={params['folder']}, limit={params['limit']}, unread_only={params['unread_only']}, gmail_category={params.get('gmail_category')}")
+        logger.info(f"Request params: server={params['server']}, folder={params['folder']}, limit={params['limit']}, unread_only={params['unread_only']}, flagged_only={params['flagged_only']}, gmail_category={params.get('gmail_category')}, from_emails={params.get('from_emails')}")
 
         try:
             messages = await fetch_email_messages(
@@ -534,7 +597,9 @@ def register_routes(app):
                 params['folder'],
                 params['limit'],
                 params['unread_only'],
-                params['gmail_category']
+                params['gmail_category'],
+                params['from_emails'],
+                params['flagged_only']
             )
 
             response_data = {
@@ -542,12 +607,16 @@ def register_routes(app):
                 'folder': params['folder'],
                 'count': len(messages),
                 'unread_only': params['unread_only'],
+                'flagged_only': params['flagged_only'],
                 'messages': messages,
                 'fetched_at': datetime.now().isoformat()
             }
 
             if params['gmail_category']:
                 response_data['gmail_category'] = params['gmail_category']
+
+            if params['from_emails']:
+                response_data['from_emails'] = params['from_emails']
 
             # Debug: Log first message to verify sender_email is present
             if messages:
