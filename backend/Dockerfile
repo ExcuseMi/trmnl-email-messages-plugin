@@ -16,11 +16,10 @@ EXPOSE 5000
 ENV PYTHONUNBUFFERED=1
 
 # Run with hypercorn (ASGI server for async Flask)
-# Single worker for easier debugging
-# Don't set --log-level to preserve our logging format
+# 4 workers for handling concurrent requests
 CMD ["hypercorn", "app:app", \
      "--bind", "0.0.0.0:5000", \
-     "--workers", "1", \
+     "--workers", "4", \
      "--worker-class", "asyncio", \
      "--access-logfile", "-", \
      "--error-logfile", "-"]
