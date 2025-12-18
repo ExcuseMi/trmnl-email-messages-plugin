@@ -12,13 +12,13 @@ custom_fields:
 - keyname: provider
   field_type: select
   name: Provider
+  default: gmail
   options:
   - Gmail: gmail
   - Outlook: outlook
   - Yahoo: yahoo
   - iCloud: icloud
   - Custom: custom
-  default: gmail
   conditional_validation:
   - when: gmail
     hidden:
@@ -92,18 +92,18 @@ custom_fields:
 - keyname: custom_port
   field_type: number
   name: IMAP Port
-  default: 993
   description: Usually 993 for SSL/TLS
+  default: 993
 - keyname: folder
   field_type: string
   name: Folder
-  default: INBOX
   description: Mailbox folder to read from
+  default: INBOX
 - keyname: gmail_category
   field_type: select
   name: Gmail Category Filter
-  default: ''
   description: Filter emails by Gmail tab (Gmail only)
+  default: ''
   options:
   - All (no filter): ''
   - Primary: Primary
@@ -114,34 +114,34 @@ custom_fields:
 - keyname: limit
   field_type: number
   name: Number of messages
-  default: 10
   description: How many emails to display (max 50)
+  default: 10
 - keyname: unread_only
   field_type: boolean
-  name: Show only unread messages
+  name: Show Only Unread Messages
+  default: ''
   optional: true
-  default: false
 - keyname: read_subject_regular
   field_type: boolean
   name: Display Read Subject As Regular Text
+  default: ''
   optional: true
-  default: true
 - keyname: show_sender_email
   field_type: boolean
-  name: Show sender email address instead of the name
+  name: Show Sender  Email  Address Instead Of Name
+  default: ''
   optional: true
-  default: false
 - keyname: flagged_only
   field_type: boolean
   name: Flagged/Important Only
   description: Only show flagged/starred emails
+  default: ''
   optional: true
-  default: false
 - keyname: from_emails
   field_type: multi_string
   name: Filter by Sendering emails
-  description: 'Comma-separated email addresses. Only show emails from these senders. Example: boss@company.com, hr@company.com'
-  optional: true
+  description: 'Comma-separated email addresses. Only show emails from these senders. Example: boss@company.com, hr@company.com Also accepts partials like @company.com'
   placeholder: name@domain.com
+  optional: true
 name: Email Messages
 refresh_interval: 60
