@@ -352,19 +352,20 @@ async def batch_fetch_flags(client, message_ids):
     return flags_dict
 
 
-async def fetch_email_messages(server, port, username, password, folder, limit, unread_only, gmail_category=None, from_emails=None, flagged_only=False):
+async def fetch_email_messages(server, port, username, password, folder, limit, unread_only, gmail_category=None, from_emails=None, flagged_only=False, important_only=False):
     """
     Optimized async IMAP fetch with batch flag fetching
 
     Args:
         gmail_category: Gmail category/tab filter (Primary, Social, Promotions, Updates, Forums)
         from_emails: List of sender email addresses to filter by (OR logic)
-        flagged_only: Only fetch flagged/important emails
+        flagged_only: Only fetch flagged/starred emails (IMAP \Flagged flag)
+        important_only: Only fetch Gmail important emails (Gmail-specific, only works with Gmail)
     """
     client = None
     try:
         start_time = time.time()
-        logger.info(f"Fetching emails from {server}:{port} folder={folder} limit={limit} unread_only={unread_only} flagged_only={flagged_only}")
+        logger.info(f"Fetching emails from {server}:{port} folder={folder} limit={limit} unread_only={unread_only} flagged_only={flagged_only} important_only={important_only}")
 
         # Create async IMAP client
         client = aioimaplib.IMAP4_SSL(host=server, port=port, timeout=30)
@@ -403,7 +404,9 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
             if unread_only:
                 gmail_parts.append('is:unread')
             if flagged_only:
-                gmail_parts.append('is:starred')  # Gmail uses "starred" for flagged
+                gmail_parts.append('is:starred')  # Gmail starred = IMAP flagged
+            if important_only:
+                gmail_parts.append('is:important')  # Gmail-specific important marker
 
             # Add from_emails to Gmail search
             if from_emails and len(from_emails) > 0:
@@ -424,6 +427,10 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
                 search_parts.append('UNSEEN')
             if flagged_only:
                 search_parts.append('FLAGGED')
+
+            # Important flag only works with Gmail
+            if important_only:
+                logger.warning("important_only flag requires Gmail - will be ignored for non-Gmail servers")
 
             # Filter by sender emails (OR logic)
             if from_emails and len(from_emails) > 0:
@@ -555,6 +562,10 @@ def get_request_params():
     if isinstance(flagged_only, str):
         flagged_only = flagged_only.lower() == 'true'
 
+    important_only = data.get('important_only', False)
+    if isinstance(important_only, str):
+        important_only = important_only.lower() == 'true'
+
     # Parse from_emails - can be comma-separated string or array
     from_emails = data.get('from_emails')
     if from_emails:
@@ -577,6 +588,7 @@ def get_request_params():
         'limit': limit,
         'unread_only': unread_only,
         'flagged_only': flagged_only,
+        'important_only': important_only,
         'gmail_category': gmail_category,
         'from_emails': from_emails
     }, None, None
@@ -598,7 +610,7 @@ def register_routes(app):
             return jsonify(error), status_code
 
         print(f"[/messages] Params: server={params['server']}, folder={params['folder']}", flush=True)
-        logger.info(f"Request params: server={params['server']}, folder={params['folder']}, limit={params['limit']}, unread_only={params['unread_only']}, flagged_only={params['flagged_only']}, gmail_category={params.get('gmail_category')}, from_emails={params.get('from_emails')}")
+        logger.info(f"Request params: server={params['server']}, folder={params['folder']}, limit={params['limit']}, unread_only={params['unread_only']}, flagged_only={params['flagged_only']}, important_only={params['important_only']}, gmail_category={params.get('gmail_category')}, from_emails={params.get('from_emails')}")
 
         try:
             messages = await fetch_email_messages(
@@ -611,7 +623,8 @@ def register_routes(app):
                 params['unread_only'],
                 params['gmail_category'],
                 params['from_emails'],
-                params['flagged_only']
+                params['flagged_only'],
+                params['important_only']
             )
 
             response_data = {
@@ -620,6 +633,7 @@ def register_routes(app):
                 'count': len(messages),
                 'unread_only': params['unread_only'],
                 'flagged_only': params['flagged_only'],
+                'important_only': params['important_only'],
                 'messages': messages,
                 'fetched_at': datetime.now().isoformat()
             }
