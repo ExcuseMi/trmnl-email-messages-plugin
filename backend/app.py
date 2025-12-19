@@ -623,6 +623,7 @@ def register_routes(app):
 
             response_data = {
                 'success': True,
+                'email': params['username'],
                 'folder': params['folder'],
                 'count': len(messages),
                 'unread_only': params['unread_only'],
