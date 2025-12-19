@@ -6,20 +6,18 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application
+# Copy application and entrypoint
 COPY app.py .
+COPY entrypoint.sh .
+
+# Make entrypoint executable
+RUN chmod +x entrypoint.sh
 
 # Expose port
 EXPOSE 5000
 
-# Set Python to unbuffered mode for immediate log output
+# Set Python to unbuffered mode
 ENV PYTHONUNBUFFERED=1
 
-# Run with hypercorn (ASGI server for async Flask)
-# 4 workers for handling concurrent requests
-CMD ["hypercorn", "app:app", \
-     "--bind", "0.0.0.0:5000", \
-     "--workers", "4", \
-     "--worker-class", "asyncio", \
-     "--access-logfile", "-", \
-     "--error-logfile", "-"]
+# Use entrypoint
+ENTRYPOINT ["./entrypoint.sh"]

@@ -36,6 +36,7 @@ docker-compose up -d
 ENABLE_IP_WHITELIST=true    # Restrict access to TRMNL IPs only
 IP_REFRESH_HOURS=24         # How often to refresh IP whitelist
 LOG_LEVEL=INFO              # Logging verbosity
+
 ```
 
 ## 🔧 How It Works
