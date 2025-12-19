@@ -2,9 +2,6 @@
 
 Display your recent emails directly on your TRMNL e-ink display with real-time IMAP synchronization.
 
-<!-- PLUGIN_STATS_START -->
-<!-- PLUGIN_STATS_END-->
-
 ## 📧 What It Does
 
 This plugin connects to your email account via IMAP and displays your most recent messages. Perfect for keeping an eye on important emails without constantly checking your phone or computer.
