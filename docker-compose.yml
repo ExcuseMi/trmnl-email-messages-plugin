@@ -3,6 +3,11 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     volumes:
       - redis_data:/data
   imap-reader:
@@ -10,7 +15,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     container_name: imap-reader
     ports:
       - "5005:5000"

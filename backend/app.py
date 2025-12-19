@@ -69,26 +69,39 @@ last_ip_refresh = None
 # Always allow localhost
 LOCALHOST_IPS = ['127.0.0.1', '::1']
 
-# Redis cache client (shared across all workers)
+# Redis cache client (initialized on first use)
 redis_client = None
-if ENABLE_CACHE:
+
+
+def get_redis_client():
+    """Lazy initialization of Redis client"""
+    global redis_client, ENABLE_CACHE
+
+    if not ENABLE_CACHE:
+        return None
+
+    if redis_client is not None:
+        return redis_client
+
     try:
         redis_client = redis.Redis(
             host=REDIS_HOST,
             port=REDIS_PORT,
             db=REDIS_DB,
-            decode_responses=True,  # Get strings instead of bytes
+            decode_responses=True,
             socket_connect_timeout=2,
             socket_timeout=2
         )
         # Test connection
         redis_client.ping()
         logger.info(f"Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
+        return redis_client
     except Exception as e:
         logger.warning(f"Redis connection failed: {e}")
         logger.warning("Cache will be DISABLED")
         ENABLE_CACHE = False
         redis_client = None
+        return None
 
 
 async def fetch_trmnl_ips():
@@ -195,11 +208,15 @@ def generate_cache_key(params):
 
 def get_cached_response(cache_key):
     """Retrieve cached response from Redis if valid"""
-    if not ENABLE_CACHE or not redis_client:
+    if not ENABLE_CACHE:
+        return None
+
+    client = get_redis_client()
+    if not client:
         return None
 
     try:
-        cached_json = redis_client.get(cache_key)
+        cached_json = client.get(cache_key)
         if cached_json:
             cached_data = json.loads(cached_json)
             logger.info(f"Cache HIT (key: {cache_key[-12:]}...)")
@@ -214,19 +231,23 @@ def get_cached_response(cache_key):
 
 def cache_response(cache_key, response_data):
     """Store response in Redis with TTL"""
-    if not ENABLE_CACHE or not redis_client:
+    if not ENABLE_CACHE:
+        return
+
+    client = get_redis_client()
+    if not client:
         return
 
     try:
         # Store as JSON with expiration
-        redis_client.setex(
+        client.setex(
             cache_key,
             CACHE_TTL_SECONDS,
             json.dumps(response_data)
         )
 
         # Get cache stats
-        cache_size = redis_client.dbsize()
+        cache_size = client.dbsize()
         logger.debug(f"Cached response (key: {cache_key[-12:]}..., total keys: {cache_size})")
     except Exception as e:
         logger.error(f"Cache write error: {e}")
@@ -856,9 +877,9 @@ async def startup_init():
     else:
         logger.warning("IP whitelist is disabled - all IPs will be allowed!")
 
-    # Log cache status
-    if ENABLE_CACHE and redis_client:
-        logger.info(f"Cache: ENABLED via Redis (TTL: {CACHE_TTL_SECONDS}s, Host: {REDIS_HOST}:{REDIS_PORT})")
+    # Log cache status (Redis connection happens on first request)
+    if ENABLE_CACHE:
+        logger.info(f"Cache: ENABLED via Redis (TTL: {CACHE_TTL_SECONDS}s, will connect to {REDIS_HOST}:{REDIS_PORT})")
     else:
         logger.info("Cache: DISABLED")
 
