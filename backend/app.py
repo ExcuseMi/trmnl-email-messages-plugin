@@ -25,7 +25,7 @@ import redis
 # Configuration
 ENABLE_IP_WHITELIST = os.getenv('ENABLE_IP_WHITELIST', 'true').lower() == 'true'
 IP_REFRESH_HOURS = int(os.getenv('IP_REFRESH_HOURS', '24'))
-LOG_LEVEL = os.getenv('LOG_LEVEL', 'DEBUG').upper()
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()  # Default to INFO
 
 # Cache configuration
 ENABLE_CACHE = os.getenv('ENABLE_CACHE', 'true').lower() == 'true'
@@ -33,6 +33,12 @@ CACHE_TTL_SECONDS = int(os.getenv('CACHE_TTL_SECONDS', '300'))  # 5 minutes defa
 REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
 REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
 REDIS_DB = int(os.getenv('REDIS_DB', '0'))
+
+# Production-ready IMAP timeouts and limits
+IMAP_CONNECT_TIMEOUT = int(os.getenv('IMAP_CONNECT_TIMEOUT', '10'))  # Reduced from 60s
+IMAP_LOGIN_TIMEOUT = int(os.getenv('IMAP_LOGIN_TIMEOUT', '15'))
+IMAP_FETCH_TIMEOUT = int(os.getenv('IMAP_FETCH_TIMEOUT', '30'))
+MAX_MESSAGES_LIMIT = int(os.getenv('MAX_MESSAGES_LIMIT', '50'))      # Prevent abuse
 
 # TRMNL API endpoint for IP addresses
 TRMNL_IPS_API = 'https://usetrmnl.com/api/ips'
@@ -74,7 +80,7 @@ redis_client = None
 
 
 def get_redis_client():
-    """Lazy initialization of Redis client"""
+    """Lazy initialization of Redis client with connection retry"""
     global redis_client, ENABLE_CACHE
 
     if not ENABLE_CACHE:
@@ -83,25 +89,39 @@ def get_redis_client():
     if redis_client is not None:
         return redis_client
 
-    try:
-        redis_client = redis.Redis(
-            host=REDIS_HOST,
-            port=REDIS_PORT,
-            db=REDIS_DB,
-            decode_responses=True,
-            socket_connect_timeout=2,
-            socket_timeout=2
-        )
-        # Test connection
-        redis_client.ping()
-        logger.info(f"Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
-        return redis_client
-    except Exception as e:
-        logger.warning(f"Redis connection failed: {e}")
-        logger.warning("Cache will be DISABLED")
-        ENABLE_CACHE = False
-        redis_client = None
-        return None
+    # Try to connect with retry logic
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            client = redis.Redis(
+                host=REDIS_HOST,
+                port=REDIS_PORT,
+                db=REDIS_DB,
+                decode_responses=True,
+                socket_connect_timeout=2,
+                socket_timeout=2
+            )
+            # Test connection
+            client.ping()
+            logger.info(f"Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
+            redis_client = client
+            return redis_client
+        except redis.ConnectionError as e:
+            if attempt < max_attempts:
+                logger.debug(f"Redis connection attempt {attempt}/{max_attempts} failed: {e}")
+                time.sleep(0.5)  # Wait before retry
+            else:
+                logger.warning(f"Redis connection failed after {max_attempts} attempts: {e}")
+                logger.warning("Cache will be DISABLED - continuing without cache")
+                ENABLE_CACHE = False
+                redis_client = None
+                return None
+        except Exception as e:
+            logger.warning(f"Redis connection error: {e}")
+            logger.warning("Cache will be DISABLED - continuing without cache")
+            ENABLE_CACHE = False
+            redis_client = None
+            return None
 
 
 async def fetch_trmnl_ips():
@@ -251,6 +271,7 @@ def cache_response(cache_key, response_data):
         logger.debug(f"Cached response (key: {cache_key[-12:]}..., total keys: {cache_size})")
     except Exception as e:
         logger.error(f"Cache write error: {e}")
+
 
 
 
@@ -474,22 +495,33 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
     Args:
         gmail_category: Gmail category/tab filter (Primary, Social, Promotions, Updates, Forums)
         from_emails: List of sender email addresses to filter by (OR logic)
-        flagged_only: Only fetch flagged/starred emails (IMAP \Flagged flag)
+        flagged_only: Only fetch flagged/starred emails (IMAP \\\\Flagged flag)
     """
     client = None
     try:
         start_time = time.time()
         logger.info(f"Fetching emails from {server}:{port} folder={folder} limit={limit} unread_only={unread_only} flagged_only={flagged_only}")
 
-        # Create async IMAP client with longer timeout for large fetches
-        client = aioimaplib.IMAP4_SSL(host=server, port=port, timeout=60)
-        await client.wait_hello_from_server()
+        # Create async IMAP client with production timeouts
+        client = aioimaplib.IMAP4_SSL(host=server, port=port, timeout=IMAP_CONNECT_TIMEOUT)
 
-        # Login
-        login_response = await client.login(username, password)
-        if login_response.result != 'OK':
-            raise Exception(f'Login failed: {login_response.lines}')
-        logger.debug(f"Successfully logged in to {server}")
+        # Wait for server hello with timeout
+        try:
+            await asyncio.wait_for(client.wait_hello_from_server(), timeout=IMAP_CONNECT_TIMEOUT)
+        except asyncio.TimeoutError:
+            raise Exception(f'Connection timeout to {server}:{port} (>{IMAP_CONNECT_TIMEOUT}s)')
+
+        # Login with timeout
+        try:
+            login_response = await asyncio.wait_for(
+                client.login(username, password),
+                timeout=IMAP_LOGIN_TIMEOUT
+            )
+            if login_response.result != 'OK':
+                raise Exception(f'Login failed: {login_response.lines}')
+            logger.debug(f"Successfully logged in to {server}")
+        except asyncio.TimeoutError:
+            raise Exception(f'Login timeout (>{IMAP_LOGIN_TIMEOUT}s)')
 
         # Select folder
         select_response = await client.select(folder)
@@ -666,7 +698,16 @@ def get_request_params():
 
     port = int(data.get('port', 993))
     folder = data.get('folder', 'INBOX')
-    limit = min(int(data.get('limit', 10)), 50)
+    limit = int(data.get('limit', 10))
+
+    # Enforce maximum message limit to prevent abuse
+    if limit > MAX_MESSAGES_LIMIT:
+        return None, {
+            'error': f'Message limit too high. Maximum allowed: {MAX_MESSAGES_LIMIT}',
+            'requested': limit,
+            'maximum': MAX_MESSAGES_LIMIT
+        }, 400
+
     gmail_category = data.get('gmail_category')
 
     unread_only = data.get('unread_only', False)
@@ -877,9 +918,15 @@ async def startup_init():
     else:
         logger.warning("IP whitelist is disabled - all IPs will be allowed!")
 
-    # Log cache status (Redis connection happens on first request)
+    # Test Redis connection if cache is enabled
     if ENABLE_CACHE:
-        logger.info(f"Cache: ENABLED via Redis (TTL: {CACHE_TTL_SECONDS}s, will connect to {REDIS_HOST}:{REDIS_PORT})")
+        logger.info(f"Cache: ENABLED (TTL: {CACHE_TTL_SECONDS}s)")
+        logger.info(f"Testing Redis connection to {REDIS_HOST}:{REDIS_PORT}...")
+        client = get_redis_client()
+        if client:
+            logger.info("✓ Redis connection successful - cache ready")
+        else:
+            logger.warning("✗ Redis connection failed - cache disabled")
     else:
         logger.info("Cache: DISABLED")
 
