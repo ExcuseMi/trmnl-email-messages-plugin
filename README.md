@@ -19,6 +19,8 @@ This plugin connects to your email account via IMAP and displays your most recen
 ## 🏗️ Backend Deployment
 
 This plugin requires a backend service to fetch emails via IMAP.
+The recipe would use my personal server to get the latest email via IMAP.
+If you want to fork my recipe and setup your own backend, feel free.
 
 ### Deploy with Docker
 
@@ -39,12 +41,6 @@ IP_REFRESH_HOURS=24         # How often to refresh IP whitelist
 LOG_LEVEL=INFO              # Logging verbosity
 ```
 
-### Requirements
-
-- **Python 3.13+**
-- **Docker** (recommended) or Python environment
-- **Open port 5000** (or configure your own)
-
 ## 🔧 How It Works
 
 ```
@@ -57,67 +53,6 @@ TRMNL Display → Polls Backend → Backend connects to Email via IMAP → Fetch
 4. **Returns data** to TRMNL in JSON format
 5. **Display renders** emails using the Liquid template
 
-## 📊 API Response Format
-
-```json
-{
-  "success": true,
-  "email": "user@example.com",
-  "folder": "INBOX",
-  "count": 10,
-  "messages": [
-    {
-      "sender": "John Doe",
-      "sender_email": "john@example.com",
-      "subject": "Meeting Tomorrow",
-      "timestamp": "2024-12-18T10:30:00+00:00",
-      "msg_id": "12345",
-      "read": false,
-      "flagged": true
-    }
-  ],
-  "fetched_at": "2024-12-18T15:30:00+00:00"
-}
-```
-
-## 🎨 Display Features
-
-### Ungrouped Mode
-```
-10:30 AM · john@example.com
-  Meeting Tomorrow
-
-Dec 17 · boss@company.com
-  Quarterly Report Ready
-```
-
-### Grouped Mode
-```
-Today
-  10:30 AM · john@example.com
-    Meeting Tomorrow
-  2:15 PM · team@company.com
-    Quick Question
-
-Yesterday
-  9:00 AM · boss@company.com
-    Quarterly Report Ready
-```
-
-## ⚡ Performance
-
-- **Fast fetching** - Optimized IMAP queries with batch flag fetching
-- **Concurrent requests** - Handles multiple simultaneous requests (4 workers)
-- **Smart caching** - IP whitelist cached for 24 hours
-- **Efficient** - ~4 seconds to fetch 30 messages
-
-## 🔒 Security & Privacy
-
-- **App passwords only** - Never use your main email password
-- **IP whitelisting** - Optional restriction to TRMNL servers only
-- **Direct connection** - Backend connects directly to email server
-- **No data storage** - Messages are fetched in real-time, not stored
-- **SSL/TLS** - All connections encrypted (port 993)
 
 ## 🐛 Troubleshooting
 
