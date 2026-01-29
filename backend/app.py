@@ -369,12 +369,15 @@ def extract_sender_name(from_header):
 
     decoded = decode_mime_header(from_header)
 
-    if '<' in decoded:
+    if '<' in decoded and '>' in decoded:
         name = decoded.split('<')[0].strip().replace('"', '').replace("'", "")
-        return name if name else decoded
+        if name:
+            return name
+        # No display name, extract email from angle brackets
+        email = decoded.split('<')[1].split('>')[0].strip()
+        return email
 
     return decoded.strip()
-
 
 def extract_header_data(fetch_response):
     """Extract header data from IMAP fetch response"""
