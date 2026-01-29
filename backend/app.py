@@ -126,7 +126,7 @@ def get_redis_client():
 def load_mock_data():
     """Load and process mock data from JSON file with dynamic timestamps"""
     try:
-        with open('mock_data.json', 'r') as f:
+        with open('mock-data.json', 'r') as f:
             mock_data = json.load(f)
         
         now = datetime.now()
