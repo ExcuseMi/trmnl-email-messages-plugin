@@ -8,7 +8,7 @@ import aioimaplib
 import email
 from email.header import decode_header
 from email.utils import parsedate_to_datetime, parseaddr
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import os
 from functools import wraps
