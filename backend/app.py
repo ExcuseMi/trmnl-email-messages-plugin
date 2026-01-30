@@ -857,7 +857,6 @@ def register_routes(app):
         health_data = {
             'status': 'healthy',
             'service': 'imap-email-reader',
-            'version': '13.3-auth-errors',
             'python': '3.13',
             'flask': 'async',
             'timestamp': datetime.now().isoformat()
