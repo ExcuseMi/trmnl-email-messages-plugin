@@ -610,50 +610,84 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
             logger.info("No messages found")
             return []
 
-        # Reverse for latest first and limit
         message_ids.reverse()
         message_ids = message_ids[:limit]
 
         logger.info(f"Found {len(message_ids)} messages to fetch")
 
-        # OPTIMIZATION: Batch fetch all flags first
-        flags_dict = await batch_fetch_flags(client, message_ids)
+        # OPTIMIZATION: Single batch fetch for FLAGS + HEADERS
+        msg_id_str = ','.join(message_ids)
 
+        fetch_response = await client.fetch(
+            msg_id_str,
+            '(FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])'
+        )
+
+        if fetch_response.result != 'OK':
+            raise Exception(f'Failed to fetch messages: {fetch_response.lines}')
+
+        # Parse the combined response
         messages = []
+        current_msg_id = None
+        current_flags = {}
+        current_header = None
 
-        # Fetch messages sequentially (IMAP protocol limitation - can't parallelize on same connection)
-        for msg_id in message_ids:
+        for line in fetch_response.lines:
+            if not isinstance(line, (bytes, bytearray)):
+                continue
+
+            line_bytes = bytes(line) if isinstance(line, bytearray) else line
+
             try:
-                fetch_response = await client.fetch(
-                    msg_id,
-                    '(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])'
-                )
+                line_str = line_bytes.decode('utf-8', errors='ignore')
 
-                if fetch_response.result != 'OK':
-                    continue
+                # Detect message boundary: "123 FETCH (...)"
+                if ' FETCH ' in line_str:
+                    # Save previous message if exists
+                    if current_msg_id and current_header:
+                        message = parse_message_data(
+                            current_header,
+                            current_msg_id,
+                            current_flags.get('read', True),
+                            current_flags.get('flagged', False)
+                        )
+                        if message:
+                            messages.append(message)
 
-                header_data = extract_header_data(fetch_response)
-                if not header_data:
-                    continue
+                    # Start new message
+                    current_msg_id = line_str.split(' FETCH ', 1)[0].strip()
+                    current_flags = {
+                        'read': '\\Seen' in line_str,
+                        'flagged': '\\Flagged' in line_str
+                    }
+                    current_header = None
 
-                # Get flags from batch fetch
-                flags = flags_dict.get(msg_id, {'read': True, 'flagged': False})
-                is_read = flags['read']
-                is_flagged = flags['flagged']
-
-                message = parse_message_data(header_data, msg_id, is_read, is_flagged)
-                if message:
-                    messages.append(message)
+                # Header data comes in subsequent lines
+                elif current_msg_id and (b'From:' in line_bytes or b'Subject:' in line_bytes or b'Date:' in line_bytes):
+                    if current_header is None:
+                        current_header = line_bytes
+                    else:
+                        current_header += line_bytes
 
             except Exception as e:
-                logger.error(f"Error processing message {msg_id}: {e}")
+                logger.error(f"Error parsing line: {e}")
                 continue
+
+        # Don't forget the last message!
+        if current_msg_id and current_header:
+            message = parse_message_data(
+                current_header,
+                current_msg_id,
+                current_flags.get('read', True),
+                current_flags.get('flagged', False)
+            )
+            if message:
+                messages.append(message)
 
         end_time = time.time()
         logger.info(f"Fetched {len(messages)} messages in {end_time - start_time:.2f} seconds")
 
         return messages
-
     except aioimaplib.aioimaplib.Abort as e:
         # Protocol state error - connection got confused
         logger.error(f"IMAP protocol error (Abort): {e}")
