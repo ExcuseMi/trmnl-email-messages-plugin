@@ -81,6 +81,36 @@ LOCALHOST_IPS = ['127.0.0.1', '::1']
 redis_client = None
 
 
+def mask_email(email_addr):
+    """
+    Mask email address for logging privacy
+    Examples:
+        user@example.com -> u***@example.com
+        test@gmail.com -> t***@gmail.com
+        @domain.com -> @domain.com (keep as-is for domain filters)
+    """
+    if not email_addr:
+        return ""
+
+    # If it's just a domain filter (starts with @), keep it
+    if email_addr.startswith('@'):
+        return email_addr
+
+    # Split email
+    if '@' not in email_addr:
+        return email_addr[:1] + "***"
+
+    local, domain = email_addr.split('@', 1)
+
+    # Mask local part: show first char + ***
+    if len(local) > 0:
+        masked_local = local[0] + "***"
+    else:
+        masked_local = "***"
+
+    return f"{masked_local}@{domain}"
+
+
 def get_redis_client():
     """Lazy initialization of Redis client with connection retry"""
     global redis_client, ENABLE_CACHE
@@ -679,6 +709,9 @@ def register_routes(app):
             logger.warning(f"[{request_id}] ✗ Invalid params from {client_ip}")
             return jsonify(error), status_code
 
+        # Mask email for logging
+        masked_username = mask_email(params['username'])
+
         # Build compact log message
         filters = []
         if params['gmail_category']:
@@ -688,14 +721,15 @@ def register_routes(app):
         if params['flagged_only']:
             filters.append("flagged")
         if params['from_emails']:
-            senders = ', '.join(params['from_emails'][:2])
+            masked_senders = [mask_email(e) for e in params['from_emails'][:2]]
+            senders = ', '.join(masked_senders)
             if len(params['from_emails']) > 2:
                 senders += f" +{len(params['from_emails'])-2}"
             filters.append(f"from=[{senders}]")
 
         filter_str = f" ({', '.join(filters)})" if filters else ""
 
-        logger.info(f"[{request_id}] 📨 {params['username']} → {params['folder']} (limit={params['limit']}){filter_str}")
+        logger.info(f"[{request_id}] 📨 {masked_username} → {params['folder']} (limit={params['limit']}){filter_str}")
 
         # Check for mock data mode
         if params['username'] == 'master@trmnl.com':
@@ -764,7 +798,7 @@ def register_routes(app):
         health_data = {
             'status': 'healthy',
             'service': 'imap-email-reader',
-            'version': '13.1-clean-logs',
+            'version': '13.2-masked-emails',
             'python': '3.13',
             'flask': 'async',
             'timestamp': datetime.now().isoformat()
