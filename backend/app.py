@@ -123,18 +123,19 @@ def get_redis_client():
             redis_client = None
             return None
 
+
 def load_mock_data():
     """Load and process mock data from JSON file with dynamic timestamps"""
     try:
         with open('mock-data.json', 'r') as f:
             mock_data = json.load(f)
-        
+
         now = datetime.now()
-        
+
         # Process timestamps
         for message in mock_data['messages']:
             timestamp_str = message['timestamp']
-            
+
             if timestamp_str == 'TODAY':
                 message['timestamp'] = now.isoformat()
             elif timestamp_str.startswith('TODAY-'):
@@ -153,14 +154,15 @@ def load_mock_data():
                 days = int(parts[0].replace('DAYS', ''))
                 hours = int(parts[1].replace('h', ''))
                 message['timestamp'] = (now - timedelta(days=days, hours=hours)).isoformat()
-        
+
         mock_data['fetched_at'] = now.isoformat()
         return mock_data
-        
+
     except Exception as e:
         logger.error(f"Error loading mock data: {e}")
         return None
-        
+
+
 async def fetch_trmnl_ips():
     """Fetch current TRMNL server IPs from their API"""
     try:
@@ -307,8 +309,6 @@ def cache_response(cache_key, response_data):
         logger.error(f"Cache write error: {e}")
 
 
-
-
 def get_allowed_ips():
     """Get current list of allowed IPs from TRMNL API"""
     with TRMNL_IPS_LOCK:
@@ -416,29 +416,6 @@ def extract_sender_name(from_header):
 
     return decoded.strip()
 
-def extract_header_data(fetch_response):
-    """Extract header data from IMAP fetch response"""
-    # Method 1: Look for header data in line 1 (most common)
-    if len(fetch_response.lines) > 1:
-        line1 = fetch_response.lines[1]
-        if isinstance(line1, (bytes, bytearray)):
-            header_data = bytes(line1) if isinstance(line1, bytearray) else line1
-            if header_data.endswith(b'\r\n\r\n'):
-                header_data = header_data[:-2]
-            if b'Date:' in header_data or b'From:' in header_data:
-                return header_data
-
-    # Method 2: Search all lines for header data
-    for line in fetch_response.lines:
-        if isinstance(line, (bytes, bytearray)):
-            line_bytes = bytes(line) if isinstance(line, bytearray) else line
-            if b'Date:' in line_bytes or b'From:' in line_bytes:
-                if line_bytes.endswith(b'\r\n\r\n'):
-                    line_bytes = line_bytes[:-2]
-                return line_bytes
-
-    return None
-
 
 def parse_message_data(header_data, msg_id, is_read=True, is_flagged=False):
     """Parse header data into message dict"""
@@ -485,54 +462,19 @@ def parse_message_data(header_data, msg_id, is_read=True, is_flagged=False):
         'flagged': is_flagged
     }
 
-    # Log the final message dict to verify sender_email is included
     logger.debug(f"Created message dict: {message_dict}")
 
     return message_dict
 
 
-async def batch_fetch_flags(client, message_ids):
-    """Fetch flags for all messages in one batch request"""
-    flags_dict = {}
-    try:
-        msg_id_str = ','.join(message_ids)
-        flags_response = await client.fetch(msg_id_str, '(FLAGS)')
-
-        if flags_response.result == 'OK':
-            for line in flags_response.lines:
-                if isinstance(line, (bytes, bytearray)):
-                    line_bytes = bytes(line) if isinstance(line, bytearray) else line
-                    try:
-                        line_str = line_bytes.decode('utf-8', errors='ignore')
-                        if ' FETCH ' in line_str:
-                            parts = line_str.split(' FETCH ', 1)
-                            msg_id = parts[0].strip()
-                            flags_str = parts[1]
-
-                            # Check for flags
-                            is_read = '\\Seen' in flags_str
-                            is_flagged = '\\Flagged' in flags_str
-
-                            flags_dict[msg_id] = {
-                                'read': is_read,
-                                'flagged': is_flagged
-                            }
-                    except:
-                        pass
-    except Exception as e:
-        logger.warning(f"Could not fetch flags in batch: {e}")
-
-    return flags_dict
-
-
 async def fetch_email_messages(server, port, username, password, folder, limit, unread_only, gmail_category=None, from_emails=None, flagged_only=False):
     """
-    Optimized async IMAP fetch with batch flag fetching
+    Optimized async IMAP fetch with combined batch fetching
 
     Args:
         gmail_category: Gmail category/tab filter (Primary, Social, Promotions, Updates, Forums)
         from_emails: List of sender email addresses to filter by (OR logic)
-        flagged_only: Only fetch flagged/starred emails (IMAP \\\\Flagged flag)
+        flagged_only: Only fetch flagged/starred emails (IMAP \\Flagged flag)
     """
     client = None
     try:
@@ -650,6 +592,7 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
             logger.info("No messages found")
             return []
 
+        # Reverse for latest first and limit
         message_ids.reverse()
         message_ids = message_ids[:limit]
 
@@ -670,7 +613,8 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
         messages = []
         current_msg_id = None
         current_flags = {}
-        current_header = None
+        header_lines = []
+        in_headers = False
 
         for line in fetch_response.lines:
             if not isinstance(line, (bytes, bytearray)):
@@ -682,11 +626,12 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
                 line_str = line_bytes.decode('utf-8', errors='ignore')
 
                 # Detect message boundary: "123 FETCH (...)"
-                if ' FETCH ' in line_str:
+                if ' FETCH ' in line_str and 'FLAGS' in line_str:
                     # Save previous message if exists
-                    if current_msg_id and current_header:
+                    if current_msg_id and header_lines:
+                        header_data = b''.join(header_lines)
                         message = parse_message_data(
-                            current_header,
+                            header_data,
                             current_msg_id,
                             current_flags.get('read', True),
                             current_flags.get('flagged', False)
@@ -700,23 +645,31 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
                         'read': '\\Seen' in line_str,
                         'flagged': '\\Flagged' in line_str
                     }
-                    current_header = None
+                    header_lines = []
+                    in_headers = False
 
-                # Header data comes in subsequent lines
-                elif current_msg_id and (b'From:' in line_bytes or b'Subject:' in line_bytes or b'Date:' in line_bytes):
-                    if current_header is None:
-                        current_header = line_bytes
+                # Start of header data (look for From:, Subject:, or Date:)
+                elif current_msg_id and not in_headers and (b'From:' in line_bytes or b'Subject:' in line_bytes or b'Date:' in line_bytes):
+                    in_headers = True
+                    header_lines.append(line_bytes)
+
+                # Continuation of header data
+                elif current_msg_id and in_headers:
+                    # Stop if we hit closing parenthesis or empty line
+                    if line_bytes.strip() == b')' or line_bytes.strip() == b'':
+                        in_headers = False
                     else:
-                        current_header += line_bytes
+                        header_lines.append(line_bytes)
 
             except Exception as e:
                 logger.error(f"Error parsing line: {e}")
                 continue
 
         # Don't forget the last message!
-        if current_msg_id and current_header:
+        if current_msg_id and header_lines:
+            header_data = b''.join(header_lines)
             message = parse_message_data(
-                current_header,
+                header_data,
                 current_msg_id,
                 current_flags.get('read', True),
                 current_flags.get('flagged', False)
@@ -728,6 +681,7 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
         logger.info(f"Fetched {len(messages)} messages in {end_time - start_time:.2f} seconds")
 
         return messages
+
     except aioimaplib.aioimaplib.Abort as e:
         # Protocol state error - connection got confused
         logger.error(f"IMAP protocol error (Abort): {e}")
@@ -831,6 +785,8 @@ def register_routes(app):
             return jsonify(error), status_code
 
         logger.info(f"Request params: server={params['server']}, folder={params['folder']}, limit={params['limit']}, unread_only={params['unread_only']}, flagged_only={params['flagged_only']}, gmail_category={params.get('gmail_category')}, from_emails={params.get('from_emails')}")
+
+        # Check for mock data mode
         if params['username'] == 'master@trmnl.com':
             logger.info("Detected master@trmnl.com - returning mock data")
             mock_response = load_mock_data()
@@ -838,6 +794,7 @@ def register_routes(app):
                 return jsonify(mock_response)
             else:
                 return jsonify({'error': 'Failed to load mock data'}), 500
+
         # Check cache first
         cache_key = generate_cache_key(params)
         cached_response = get_cached_response(cache_key)
@@ -898,7 +855,7 @@ def register_routes(app):
         health_data = {
             'status': 'healthy',
             'service': 'imap-email-reader',
-            'version': '12.2-docker-logging',
+            'version': '13.0-optimized-batch-fetch',
             'python': '3.13',
             'flask': 'async',
             'timestamp': datetime.now().isoformat()
