@@ -59,11 +59,13 @@
 {% template main %}
 <div class="layout layout--stretch layout--center">
   {% if data.error %}
-  <div class="flex flex--col">
-    <div class="description">{{data.error}}</div>
+  <div class="flex flex--col flex--center text-center px--4">
+    <div class="title title--medium mb--2">{{data.error}}</div>
+    {% if data.message %}
+    <div class="description">{{data.message}}</div>
+    {% endif %}
   </div>
   {% else %}
-
   {% assign group_by_date = trmnl.plugin_settings.custom_fields_values.group_by_date | default: "no" %}
   {% assign time_format = trmnl.plugin_settings.custom_fields_values.time_format | default: "24h" %}
   {% assign date_format = trmnl.plugin_settings.custom_fields_values.date_format | default: "short" %}

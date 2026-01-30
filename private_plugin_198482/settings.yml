@@ -46,6 +46,9 @@ custom_fields:
     - custom_password
     - custom_server
     - custom_port
+    required:
+    - gmail_password
+    - gmail_category
   - when: outlook
     hidden:
     - gmail_password
@@ -55,6 +58,8 @@ custom_fields:
     - custom_password
     - custom_server
     - custom_port
+    required:
+    - outlook_password
   - when: yahoo
     hidden:
     - gmail_password
@@ -64,6 +69,8 @@ custom_fields:
     - custom_password
     - custom_server
     - custom_port
+    required:
+    - yahoo_password
   - when: icloud
     hidden:
     - gmail_password
@@ -73,6 +80,8 @@ custom_fields:
     - custom_password
     - custom_server
     - custom_port
+    required:
+    - icloud_password
   - when: custom
     hidden:
     - gmail_password
@@ -80,6 +89,10 @@ custom_fields:
     - outlook_password
     - yahoo_password
     - icloud_password
+    required:
+    - custom_password
+    - custom_server
+    - custom_port
 - keyname: email
   field_type: string
   name: Email Address
@@ -94,6 +107,7 @@ custom_fields:
 - keyname: gmail_password
   field_type: password
   name: Gmail App Password
+  optional: true
   description: Application-specific password for Gmail IMAP access.
   help_text: |
     <strong>IMPORTANT:</strong> Never use your regular Gmail password!<br /><br />
@@ -104,6 +118,7 @@ custom_fields:
 - keyname: outlook_password
   field_type: password
   name: Outlook App Password
+  optional: true
   description: Application password for Outlook IMAP access.
   help_text: |
     <strong>Setup Steps:</strong><br /><br />
@@ -116,6 +131,7 @@ custom_fields:
   field_type: password
   name: Yahoo App Password
   description: Application password for Yahoo Mail IMAP access.
+  optional: true
   help_text: |
     <strong>App password required for IMAP access.</strong><br /><br />
     Generate in your Yahoo Account Security settings under "App passwords".<br /><br />
@@ -124,6 +140,7 @@ custom_fields:
   field_type: password
   name: iCloud App-Specific Password
   description: App-specific password for iCloud IMAP access.
+  optional: true
   help_text: |
     <strong>2-Factor Authentication required.</strong><br /><br />
     1. Go to <a href="https://appleid.apple.com" target="_blank" rel="noopener">Apple ID Security</a><br />
@@ -133,6 +150,7 @@ custom_fields:
 - keyname: custom_password
   field_type: password
   name: IMAP Password
+  optional: true
   description: Password for custom IMAP server authentication.
   help_text: |
     Check with your email provider for specific IMAP authentication requirements.<br /><br />
@@ -140,6 +158,7 @@ custom_fields:
 - keyname: custom_server
   field_type: string
   name: IMAP Server Address
+  optional: true
   description: IMAP server hostname for your email provider.
   placeholder: imap.example.com
   help_text: |
@@ -151,6 +170,7 @@ custom_fields:
 - keyname: custom_port
   field_type: number
   name: IMAP Port
+  optional: true
   description: Port number for IMAP connection.
   default: 993
   min: 1
@@ -179,6 +199,7 @@ custom_fields:
   name: Gmail Category Filter
   description: Filter emails by Gmail category.
   default: ''
+  optional: true
   options:
   - All Categories: ''
   - Primary (Personal): Primary
@@ -320,4 +341,4 @@ custom_fields:
   - ISO Date (2024-12-18): iso
   help_text: Choose based on your display size and personal preference.
 name: Email Messages
-refresh_interval: 60
+refresh_interval: 1440
