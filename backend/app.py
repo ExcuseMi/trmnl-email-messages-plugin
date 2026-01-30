@@ -111,6 +111,45 @@ def mask_email(email_addr):
     return f"{masked_local}@{domain}"
 
 
+def format_auth_error(email_addr, error_message):
+    """Format authentication errors with helpful guidance"""
+    # Detect email provider
+    domain = email_addr.lower().split('@')[-1] if '@' in email_addr else ''
+
+    base_msg = "Unable to connect to your email account. "
+
+    # Provider-specific guidance
+    if 'gmail.com' in domain:
+        return (
+            base_msg +
+            "For Gmail accounts, you need to use an App Password instead of your regular password. "
+            "Visit https://myaccount.google.com/apppasswords to create one."
+        )
+    elif 'outlook' in domain or 'hotmail' in domain or 'live.com' in domain:
+        return (
+            base_msg +
+            "For Outlook/Hotmail accounts, you may need to enable IMAP access and use an App Password. "
+            "Visit your Outlook account settings to enable IMAP."
+        )
+    elif 'yahoo.com' in domain:
+        return (
+            base_msg +
+            "For Yahoo accounts, you need to generate an App Password. "
+            "Visit https://login.yahoo.com/account/security to create one."
+        )
+    elif 'icloud.com' in domain:
+        return (
+            base_msg +
+            "For iCloud accounts, you need to use an App-Specific Password. "
+            "Visit https://appleid.apple.com to generate one."
+        )
+    else:
+        return (
+            base_msg +
+            "Please check your username and password. Many email providers require App Passwords instead of your regular password."
+        )
+
+
 def get_redis_client():
     """Lazy initialization of Redis client with connection retry"""
     global redis_client, ENABLE_CACHE
@@ -785,8 +824,28 @@ def register_routes(app):
 
         except Exception as e:
             error_msg = str(e)
-            status_code = 401 if 'authentication' in error_msg.lower() or 'login' in error_msg.lower() else 500
-            return jsonify({'error': error_msg}), status_code
+
+            # Detect authentication errors
+            is_auth_error = any(x in error_msg.lower() for x in [
+                'authentication', 'login', 'credentials', 'password',
+                'authenticationfailed', 'invalid credentials'
+            ])
+
+            if is_auth_error:
+                friendly_error = format_auth_error(params['username'], error_msg)
+                logger.warning(f"[{request_id}] 🔒 Auth failed for {masked_username}")
+                return jsonify({
+                    'error': 'Authentication Failed',
+                    'message': friendly_error,
+                    'code': 'AUTH_FAILED'
+                }), 401
+            else:
+                logger.error(f"[{request_id}] ✗ {error_msg}")
+                return jsonify({
+                    'error': 'Connection Error',
+                    'message': error_msg,
+                    'code': 'CONNECTION_ERROR'
+                }), 500
 
     @app.route('/health')
     def health():
@@ -798,7 +857,7 @@ def register_routes(app):
         health_data = {
             'status': 'healthy',
             'service': 'imap-email-reader',
-            'version': '13.2-masked-emails',
+            'version': '13.3-auth-errors',
             'python': '3.13',
             'flask': 'async',
             'timestamp': datetime.now().isoformat()
@@ -824,24 +883,6 @@ def register_routes(app):
             }
 
         return jsonify(health_data)
-
-    @app.route('/test-logging')
-    def test_logging():
-        """Test endpoint to verify logging is working"""
-        test_id = str(uuid.uuid4())[:8]
-        logger.info(f"[{test_id}] 🧪 Testing log levels...")
-        logger.debug(f"[{test_id}] 🐛 DEBUG message")
-        logger.info(f"[{test_id}] ℹ️  INFO message")
-        logger.warning(f"[{test_id}] ⚠️  WARNING message")
-        logger.error(f"[{test_id}] ❌ ERROR message")
-
-        return jsonify({
-            'status': 'ok',
-            'test_id': test_id,
-            'message': 'Check logs for test messages',
-            'log_level': LOG_LEVEL
-        })
-
 
 # Create app instance
 app = create_app()
