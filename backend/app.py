@@ -8,7 +8,7 @@ import aioimaplib
 import email
 from email.header import decode_header
 from email.utils import parsedate_to_datetime, parseaddr
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import os
 from functools import wraps
@@ -123,7 +123,44 @@ def get_redis_client():
             redis_client = None
             return None
 
-
+def load_mock_data():
+    """Load and process mock data from JSON file with dynamic timestamps"""
+    try:
+        with open('mock-data.json', 'r') as f:
+            mock_data = json.load(f)
+        
+        now = datetime.now()
+        
+        # Process timestamps
+        for message in mock_data['messages']:
+            timestamp_str = message['timestamp']
+            
+            if timestamp_str == 'TODAY':
+                message['timestamp'] = now.isoformat()
+            elif timestamp_str.startswith('TODAY-'):
+                hours = int(timestamp_str.split('-')[1].replace('h', ''))
+                message['timestamp'] = (now - timedelta(hours=hours)).isoformat()
+            elif timestamp_str == 'YESTERDAY':
+                message['timestamp'] = (now - timedelta(days=1)).isoformat()
+            elif timestamp_str.startswith('YESTERDAY-'):
+                hours = int(timestamp_str.split('-')[1].replace('h', ''))
+                message['timestamp'] = (now - timedelta(days=1, hours=hours)).isoformat()
+            elif timestamp_str.endswith('DAYS'):
+                days = int(timestamp_str.replace('DAYS', ''))
+                message['timestamp'] = (now - timedelta(days=days)).isoformat()
+            elif 'DAYS-' in timestamp_str:
+                parts = timestamp_str.split('-')
+                days = int(parts[0].replace('DAYS', ''))
+                hours = int(parts[1].replace('h', ''))
+                message['timestamp'] = (now - timedelta(days=days, hours=hours)).isoformat()
+        
+        mock_data['fetched_at'] = now.isoformat()
+        return mock_data
+        
+    except Exception as e:
+        logger.error(f"Error loading mock data: {e}")
+        return None
+        
 async def fetch_trmnl_ips():
     """Fetch current TRMNL server IPs from their API"""
     try:
@@ -369,12 +406,15 @@ def extract_sender_name(from_header):
 
     decoded = decode_mime_header(from_header)
 
-    if '<' in decoded:
+    if '<' in decoded and '>' in decoded:
         name = decoded.split('<')[0].strip().replace('"', '').replace("'", "")
-        return name if name else decoded
+        if name:
+            return name
+        # No display name, extract email from angle brackets
+        email = decoded.split('<')[1].split('>')[0].strip()
+        return email
 
     return decoded.strip()
-
 
 def extract_header_data(fetch_response):
     """Extract header data from IMAP fetch response"""
@@ -791,7 +831,13 @@ def register_routes(app):
             return jsonify(error), status_code
 
         logger.info(f"Request params: server={params['server']}, folder={params['folder']}, limit={params['limit']}, unread_only={params['unread_only']}, flagged_only={params['flagged_only']}, gmail_category={params.get('gmail_category')}, from_emails={params.get('from_emails')}")
-
+        if params['username'] == 'master@trmnl.com':
+            logger.info("Detected master@trmnl.com - returning mock data")
+            mock_response = load_mock_data()
+            if mock_response:
+                return jsonify(mock_response)
+            else:
+                return jsonify({'error': 'Failed to load mock data'}), 500
         # Check cache first
         cache_key = generate_cache_key(params)
         cached_response = get_cached_response(cache_key)
