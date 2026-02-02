@@ -22,6 +22,50 @@ import json
 import redis
 import uuid
 import ssl
+import warnings
+
+# Suppress resource warnings from background tasks
+warnings.filterwarnings('ignore', category=ResourceWarning)
+
+
+def asyncio_exception_handler(loop, context):
+    """
+    Custom exception handler to suppress noisy background task errors.
+    aioimaplib creates multiple connection attempts (IPv4/IPv6, different SSL configs)
+    and we only care about the one that succeeds.
+    """
+    exception = context.get('exception')
+
+    # Suppress expected connection failures from background tasks
+    if isinstance(exception, (
+            ssl.SSLError,
+            ssl.SSLCertVerificationError,
+            OSError,
+            ConnectionError,
+            ConnectionRefusedError,
+            ConnectionResetError,
+            TimeoutError
+    )):
+        # These are normal - aioimaplib tries multiple methods
+        return
+
+    # Log unexpected exceptions
+    message = context.get('message', 'Unhandled exception')
+    logger.error(f"Asyncio: {message}")
+    if exception:
+        logger.error(f"Details: {exception}", exc_info=exception)
+
+
+def setup_asyncio_exception_handler():
+    """Configure asyncio to suppress background connection attempt errors"""
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    loop.set_exception_handler(asyncio_exception_handler)
+    return loop
 
 # Configuration
 ENABLE_IP_WHITELIST = os.getenv('ENABLE_IP_WHITELIST', 'true').lower() == 'true'
@@ -980,12 +1024,12 @@ async def startup_init():
 try:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    loop.set_exception_handler(asyncio_exception_handler)  # Set handler before running
     loop.run_until_complete(startup_init())
     loop.close()
 except Exception as e:
     logger.error(f"✗ Startup error: {e}")
     logger.warning("⚠️  Continuing with fallback IPs")
-
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
