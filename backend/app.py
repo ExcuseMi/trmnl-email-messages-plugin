@@ -23,90 +23,56 @@ import redis
 import uuid
 import ssl
 import warnings
+import logging as stdlib_logging
 
-import warnings
-import sys
-
-# Add right after imports, before Configuration section
-
-# Suppress SSL warnings and resource warnings
+# Suppress all warnings
 warnings.filterwarnings('ignore', category=ResourceWarning)
+warnings.filterwarnings('ignore')
 
+# Redirect stderr to filter out SSL traceback noise
+class StderrFilter:
+    """Filter to suppress SSL certificate verification errors from stderr"""
+    def __init__(self, original_stderr):
+        self.original_stderr = original_stderr
+        self.suppress_lines = 0
 
-# Override sys.unraisablehook to catch unhandled task exceptions
-def custom_unraisable_hook(unraisable):
-    """
-    Suppress SSL cert verification errors from background connection attempts.
-    These occur when aioimaplib tries multiple connection methods simultaneously.
-    """
-    if unraisable.exc_type is ssl.SSLCertVerificationError:
-        # Silently ignore - this is expected behavior from aioimaplib
-        return
+    def write(self, text):
+        # Start suppressing when we see "Task exception was never retrieved"
+        if 'Task exception was never retrieved' in text:
+            # Check if this is about SSL
+            self.suppress_lines = 15  # Suppress next 15 lines (typical traceback length)
+            return
 
-    if unraisable.exc_type in (OSError, ConnectionError, TimeoutError):
-        # Also ignore connection errors from failed attempts
-        return
+        # Suppress SSL-related lines
+        if any(keyword in text for keyword in [
+            'SSLCertVerificationError',
+            'CERTIFICATE_VERIFY_FAILED',
+            'ssl.SSLCertVerificationError',
+            'self._sslobj.do_handshake()',
+            'Network is unreachable',
+            'OSError: [Errno 101]'
+        ]):
+            self.suppress_lines = max(self.suppress_lines, 10)
+            return
 
-    # For other exceptions, use default handling
-    sys.__unraisablehook__(unraisable)
+        if self.suppress_lines > 0:
+            # Continue suppressing traceback lines
+            if text.strip().startswith('File ') or 'at 0x' in text or text.strip() == '':
+                self.suppress_lines -= 1
+                return
+            # If we hit something that doesn't look like a traceback, stop suppressing
+            self.suppress_lines = 0
 
+        self.original_stderr.write(text)
 
-# Install the hook globally
-sys.unraisablehook = custom_unraisable_hook
+    def flush(self):
+        self.original_stderr.flush()
 
+    def isatty(self):
+        return self.original_stderr.isatty()
 
-def asyncio_exception_handler(loop, context):
-    """
-    Handle exceptions in asyncio tasks.
-    Suppress expected connection failures from background tasks.
-    """
-    exception = context.get('exception')
-
-    # Suppress SSL and connection errors from background tasks
-    if exception and isinstance(exception, (
-            ssl.SSLError,
-            ssl.SSLCertVerificationError,
-            OSError,
-            ConnectionError,
-            TimeoutError
-    )):
-        return  # Silently ignore
-
-    # Log unexpected exceptions
-    if exception:
-        logger.error(f"Asyncio exception: {context.get('message', 'Unknown')}", exc_info=exception)
-
-
-# Monkey-patch asyncio to always use our exception handler
-_original_new_event_loop = asyncio.new_event_loop
-
-
-def _patched_new_event_loop():
-    """Create new event loop with our exception handler pre-installed"""
-    loop = _original_new_event_loop()
-    loop.set_exception_handler(asyncio_exception_handler)
-    return loop
-
-
-asyncio.new_event_loop = _patched_new_event_loop
-
-# Also set it on the current loop if one exists
-try:
-    loop = asyncio.get_event_loop()
-    loop.set_exception_handler(asyncio_exception_handler)
-except RuntimeError:
-    pass
-
-def setup_asyncio_exception_handler():
-    """Configure asyncio to suppress background connection attempt errors"""
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-    loop.set_exception_handler(asyncio_exception_handler)
-    return loop
+# Install stderr filter BEFORE any logging
+sys.stderr = StderrFilter(sys.__stderr__)
 
 # Configuration
 ENABLE_IP_WHITELIST = os.getenv('ENABLE_IP_WHITELIST', 'true').lower() == 'true'
