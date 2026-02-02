@@ -32,6 +32,7 @@ warnings.filterwarnings('ignore')
 # Redirect stderr to filter out SSL traceback noise
 class StderrFilter:
     """Filter to suppress SSL certificate verification errors from stderr"""
+
     def __init__(self, original_stderr):
         self.original_stderr = original_stderr
         self.suppress_lines = 0
@@ -71,6 +72,18 @@ class StderrFilter:
     def isatty(self):
         return self.original_stderr.isatty()
 
+    def reconfigure(self, **kwargs):
+        """Pass reconfigure calls to the original stderr"""
+        if hasattr(self.original_stderr, 'reconfigure'):
+            return self.original_stderr.reconfigure(**kwargs)
+
+    def fileno(self):
+        """Return file descriptor"""
+        return self.original_stderr.fileno()
+
+    def __getattr__(self, name):
+        """Proxy any other method calls to original stderr"""
+        return getattr(self.original_stderr, name)
 # Install stderr filter BEFORE any logging
 sys.stderr = StderrFilter(sys.__stderr__)
 
