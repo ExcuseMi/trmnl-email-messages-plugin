@@ -24,37 +24,78 @@ import uuid
 import ssl
 import warnings
 
-# Suppress resource warnings from background tasks
+import warnings
+import sys
+
+# Add right after imports, before Configuration section
+
+# Suppress SSL warnings and resource warnings
 warnings.filterwarnings('ignore', category=ResourceWarning)
+
+
+# Override sys.unraisablehook to catch unhandled task exceptions
+def custom_unraisable_hook(unraisable):
+    """
+    Suppress SSL cert verification errors from background connection attempts.
+    These occur when aioimaplib tries multiple connection methods simultaneously.
+    """
+    if unraisable.exc_type is ssl.SSLCertVerificationError:
+        # Silently ignore - this is expected behavior from aioimaplib
+        return
+
+    if unraisable.exc_type in (OSError, ConnectionError, TimeoutError):
+        # Also ignore connection errors from failed attempts
+        return
+
+    # For other exceptions, use default handling
+    sys.__unraisablehook__(unraisable)
+
+
+# Install the hook globally
+sys.unraisablehook = custom_unraisable_hook
 
 
 def asyncio_exception_handler(loop, context):
     """
-    Custom exception handler to suppress noisy background task errors.
-    aioimaplib creates multiple connection attempts (IPv4/IPv6, different SSL configs)
-    and we only care about the one that succeeds.
+    Handle exceptions in asyncio tasks.
+    Suppress expected connection failures from background tasks.
     """
     exception = context.get('exception')
 
-    # Suppress expected connection failures from background tasks
-    if isinstance(exception, (
+    # Suppress SSL and connection errors from background tasks
+    if exception and isinstance(exception, (
             ssl.SSLError,
             ssl.SSLCertVerificationError,
             OSError,
             ConnectionError,
-            ConnectionRefusedError,
-            ConnectionResetError,
             TimeoutError
     )):
-        # These are normal - aioimaplib tries multiple methods
-        return
+        return  # Silently ignore
 
     # Log unexpected exceptions
-    message = context.get('message', 'Unhandled exception')
-    logger.error(f"Asyncio: {message}")
     if exception:
-        logger.error(f"Details: {exception}", exc_info=exception)
+        logger.error(f"Asyncio exception: {context.get('message', 'Unknown')}", exc_info=exception)
 
+
+# Monkey-patch asyncio to always use our exception handler
+_original_new_event_loop = asyncio.new_event_loop
+
+
+def _patched_new_event_loop():
+    """Create new event loop with our exception handler pre-installed"""
+    loop = _original_new_event_loop()
+    loop.set_exception_handler(asyncio_exception_handler)
+    return loop
+
+
+asyncio.new_event_loop = _patched_new_event_loop
+
+# Also set it on the current loop if one exists
+try:
+    loop = asyncio.get_event_loop()
+    loop.set_exception_handler(asyncio_exception_handler)
+except RuntimeError:
+    pass
 
 def setup_asyncio_exception_handler():
     """Configure asyncio to suppress background connection attempt errors"""
