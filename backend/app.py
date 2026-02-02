@@ -481,6 +481,7 @@ def parse_message_data(header_data, msg_id, is_read=True, is_flagged=False):
 async def fetch_email_messages(server, port, username, password, folder, limit, unread_only, gmail_category=None, from_emails=None, flagged_only=False, request_id=None):
     """
     Optimized async IMAP fetch with combined batch fetching
+    Force IPv4 to prevent "Network unreachable" errors with IPv6
     """
     client = None
     req_prefix = f"[{request_id}]" if request_id else ""
@@ -488,9 +489,22 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
     try:
         start_time = time.time()
 
-        # Create async IMAP client
-        client = aioimaplib.IMAP4_SSL(host=server, port=port, timeout=IMAP_CONNECT_TIMEOUT)
+        # Force IPv4 resolution to avoid IPv6 unreachable errors
+        import socket
+        try:
+            addr_info = socket.getaddrinfo(
+                server, port,
+                socket.AF_INET,  # IPv4 only
+                socket.SOCK_STREAM
+            )
+            resolved_host = addr_info[0][4][0]
+            logger.debug(f"{req_prefix} Resolved {server} -> {resolved_host}")
+        except socket.gaierror as e:
+            logger.warning(f"{req_prefix} DNS resolution failed, using hostname: {e}")
+            resolved_host = server
 
+        # Create async IMAP client with IPv4 address
+        client = aioimaplib.IMAP4_SSL(host=resolved_host, port=port, timeout=IMAP_CONNECT_TIMEOUT)
         # Wait for server hello
         try:
             await asyncio.wait_for(client.wait_hello_from_server(), timeout=IMAP_CONNECT_TIMEOUT)
@@ -739,7 +753,7 @@ def register_routes(app):
     @app.route('/messages', methods=['GET', 'POST'])
     @require_whitelisted_ip
     async def get_messages():
-        """Get latest email messages via IMAP"""
+        """Get latest email messages via IMAP with cache fallback"""
         request_id = str(uuid.uuid4())[:8]
         client_ip = get_client_ip()
 
@@ -763,7 +777,7 @@ def register_routes(app):
             masked_senders = [mask_email(e) for e in params['from_emails'][:2]]
             senders = ', '.join(masked_senders)
             if len(params['from_emails']) > 2:
-                senders += f" +{len(params['from_emails'])-2}"
+                senders += f" +{len(params['from_emails']) - 2}"
             filters.append(f"from=[{senders}]")
 
         filter_str = f" ({', '.join(filters)})" if filters else ""
@@ -779,7 +793,7 @@ def register_routes(app):
             else:
                 return jsonify({'error': 'Failed to load mock data'}), 500
 
-        # Check cache
+        # Check cache first
         cache_key = generate_cache_key(params)
         cached_response = get_cached_response(cache_key)
         if cached_response:
@@ -818,6 +832,7 @@ def register_routes(app):
             if params['from_emails']:
                 response_data['from_emails'] = params['from_emails']
 
+            # Cache successful response
             cache_response(cache_key, response_data)
 
             return jsonify(response_data)
@@ -831,10 +846,31 @@ def register_routes(app):
                 'authenticationfailed', 'invalid credentials'
             ])
 
+            # Try to return cached data on failure
+            cached_fallback = get_cached_response(cache_key)
+
+            if cached_fallback:
+                logger.warning(f"[{request_id}] ⚠️  Fetch failed, returning stale cache")
+
+                # Add error information to cached response
+                cached_fallback['success'] = False
+                cached_fallback['cached'] = True
+                cached_fallback['cache_warning'] = 'Live fetch failed - returning cached data'
+                cached_fallback['error'] = {
+                    'message': error_msg,
+                    'type': 'AUTH_FAILED' if is_auth_error else 'CONNECTION_ERROR',
+                    'occurred_at': datetime.now().isoformat()
+                }
+
+                # Return cached data with warning status (200 OK but with error info)
+                return jsonify(cached_fallback), 200
+
+            # No cache available - return error
             if is_auth_error:
                 friendly_error = format_auth_error(params['username'], error_msg)
                 logger.warning(f"[{request_id}] 🔒 Auth failed for {masked_username}")
                 return jsonify({
+                    'success': False,
                     'error': 'Authentication Failed',
                     'message': friendly_error,
                     'code': 'AUTH_FAILED'
@@ -842,6 +878,7 @@ def register_routes(app):
             else:
                 logger.error(f"[{request_id}] ✗ {error_msg}")
                 return jsonify({
+                    'success': False,
                     'error': 'Connection Error',
                     'message': error_msg,
                     'code': 'CONNECTION_ERROR'
