@@ -21,7 +21,7 @@ import hashlib
 import json
 import redis
 import uuid
-
+import ssl
 
 # Configuration
 ENABLE_IP_WHITELIST = os.getenv('ENABLE_IP_WHITELIST', 'true').lower() == 'true'
@@ -80,7 +80,13 @@ LOCALHOST_IPS = ['127.0.0.1', '::1']
 # Redis cache client (initialized on first use)
 redis_client = None
 
-
+def create_ssl_context():
+    """Create SSL context with proper certificate verification"""
+    context = ssl.create_default_context()
+    # Use system certificates
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
+    return context
 def mask_email(email_addr):
     """
     Mask email address for logging privacy
@@ -478,10 +484,10 @@ def parse_message_data(header_data, msg_id, is_read=True, is_flagged=False):
     }
 
 
-async def fetch_email_messages(server, port, username, password, folder, limit, unread_only, gmail_category=None, from_emails=None, flagged_only=False, request_id=None):
+async def fetch_email_messages(server, port, username, password, folder, limit, unread_only, gmail_category=None,
+                               from_emails=None, flagged_only=False, request_id=None):
     """
     Optimized async IMAP fetch with combined batch fetching
-    Force IPv4 to prevent "Network unreachable" errors with IPv6
     """
     client = None
     req_prefix = f"[{request_id}]" if request_id else ""
@@ -489,7 +495,7 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
     try:
         start_time = time.time()
 
-        # Force IPv4 resolution to avoid IPv6 unreachable errors
+        # Force IPv4 resolution to avoid IPv6 issues
         import socket
         try:
             addr_info = socket.getaddrinfo(
@@ -500,11 +506,26 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
             resolved_host = addr_info[0][4][0]
             logger.debug(f"{req_prefix} Resolved {server} -> {resolved_host}")
         except socket.gaierror as e:
-            logger.warning(f"{req_prefix} DNS resolution failed, using hostname: {e}")
+            logger.warning(f"{req_prefix} DNS resolution failed: {e}")
             resolved_host = server
 
-        # Create async IMAP client with IPv4 address
-        client = aioimaplib.IMAP4_SSL(host=resolved_host, port=port, timeout=IMAP_CONNECT_TIMEOUT)
+        # Create SSL context with proper certificates
+        ssl_context = create_ssl_context()
+
+        # Create async IMAP client with SSL context
+        # Use original hostname for SNI, resolved IP for connection
+        client = aioimaplib.IMAP4_SSL(
+            host=resolved_host,
+            port=port,
+            timeout=IMAP_CONNECT_TIMEOUT,
+            ssl_context=ssl_context
+        )
+
+        # Override the host for SNI (Server Name Indication)
+        # This ensures SSL verification works with the correct hostname
+        if hasattr(client, '_host'):
+            client._host = server
+
         # Wait for server hello
         try:
             await asyncio.wait_for(client.wait_hello_from_server(), timeout=IMAP_CONNECT_TIMEOUT)
