@@ -28,6 +28,7 @@ services:
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
+      - PYTHONWARNINGS=ignore
     networks:
       - imap-network
     healthcheck:
