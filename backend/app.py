@@ -1044,7 +1044,6 @@ async def startup_init():
 try:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.set_exception_handler(asyncio_exception_handler)  # Set handler before running
     loop.run_until_complete(startup_init())
     loop.close()
 except Exception as e:
