@@ -23,69 +23,9 @@ import redis
 import uuid
 import ssl
 import warnings
-import logging as stdlib_logging
 
-# Suppress all warnings
+# Suppress warnings
 warnings.filterwarnings('ignore', category=ResourceWarning)
-warnings.filterwarnings('ignore')
-
-# Redirect stderr to filter out SSL traceback noise
-class StderrFilter:
-    """Filter to suppress SSL certificate verification errors from stderr"""
-
-    def __init__(self, original_stderr):
-        self.original_stderr = original_stderr
-        self.suppress_lines = 0
-
-    def write(self, text):
-        # Start suppressing when we see "Task exception was never retrieved"
-        if 'Task exception was never retrieved' in text:
-            # Check if this is about SSL
-            self.suppress_lines = 15  # Suppress next 15 lines (typical traceback length)
-            return
-
-        # Suppress SSL-related lines
-        if any(keyword in text for keyword in [
-            'SSLCertVerificationError',
-            'CERTIFICATE_VERIFY_FAILED',
-            'ssl.SSLCertVerificationError',
-            'self._sslobj.do_handshake()',
-            'Network is unreachable',
-            'OSError: [Errno 101]'
-        ]):
-            self.suppress_lines = max(self.suppress_lines, 10)
-            return
-
-        if self.suppress_lines > 0:
-            # Continue suppressing traceback lines
-            if text.strip().startswith('File ') or 'at 0x' in text or text.strip() == '':
-                self.suppress_lines -= 1
-                return
-            # If we hit something that doesn't look like a traceback, stop suppressing
-            self.suppress_lines = 0
-
-        self.original_stderr.write(text)
-
-    def flush(self):
-        self.original_stderr.flush()
-
-    def isatty(self):
-        return self.original_stderr.isatty()
-
-    def reconfigure(self, **kwargs):
-        """Pass reconfigure calls to the original stderr"""
-        if hasattr(self.original_stderr, 'reconfigure'):
-            return self.original_stderr.reconfigure(**kwargs)
-
-    def fileno(self):
-        """Return file descriptor"""
-        return self.original_stderr.fileno()
-
-    def __getattr__(self, name):
-        """Proxy any other method calls to original stderr"""
-        return getattr(self.original_stderr, name)
-# Install stderr filter BEFORE any logging
-sys.stderr = StderrFilter(sys.__stderr__)
 
 # Configuration
 ENABLE_IP_WHITELIST = os.getenv('ENABLE_IP_WHITELIST', 'true').lower() == 'true'
@@ -144,13 +84,7 @@ LOCALHOST_IPS = ['127.0.0.1', '::1']
 # Redis cache client (initialized on first use)
 redis_client = None
 
-def create_ssl_context():
-    """Create SSL context with proper certificate verification"""
-    context = ssl.create_default_context()
-    # Use system certificates
-    context.check_hostname = True
-    context.verify_mode = ssl.CERT_REQUIRED
-    return context
+
 def mask_email(email_addr):
     """
     Mask email address for logging privacy
@@ -548,8 +482,7 @@ def parse_message_data(header_data, msg_id, is_read=True, is_flagged=False):
     }
 
 
-async def fetch_email_messages(server, port, username, password, folder, limit, unread_only, gmail_category=None,
-                               from_emails=None, flagged_only=False, request_id=None):
+async def fetch_email_messages(server, port, username, password, folder, limit, unread_only, gmail_category=None, from_emails=None, flagged_only=False, request_id=None):
     """
     Optimized async IMAP fetch with combined batch fetching
     """
@@ -559,36 +492,8 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
     try:
         start_time = time.time()
 
-        # Force IPv4 resolution to avoid IPv6 issues
-        import socket
-        try:
-            addr_info = socket.getaddrinfo(
-                server, port,
-                socket.AF_INET,  # IPv4 only
-                socket.SOCK_STREAM
-            )
-            resolved_host = addr_info[0][4][0]
-            logger.debug(f"{req_prefix} Resolved {server} -> {resolved_host}")
-        except socket.gaierror as e:
-            logger.warning(f"{req_prefix} DNS resolution failed: {e}")
-            resolved_host = server
-
-        # Create SSL context with proper certificates
-        ssl_context = create_ssl_context()
-
-        # Create async IMAP client with SSL context
-        # Use original hostname for SNI, resolved IP for connection
-        client = aioimaplib.IMAP4_SSL(
-            host=resolved_host,
-            port=port,
-            timeout=IMAP_CONNECT_TIMEOUT,
-            ssl_context=ssl_context
-        )
-
-        # Override the host for SNI (Server Name Indication)
-        # This ensures SSL verification works with the correct hostname
-        if hasattr(client, '_host'):
-            client._host = server
+        # Create async IMAP client
+        client = aioimaplib.IMAP4_SSL(host=server, port=port, timeout=IMAP_CONNECT_TIMEOUT)
 
         # Wait for server hello
         try:
@@ -1005,6 +910,7 @@ def register_routes(app):
 
         return jsonify(health_data)
 
+
 # Create app instance
 app = create_app()
 
@@ -1049,6 +955,7 @@ try:
 except Exception as e:
     logger.error(f"✗ Startup error: {e}")
     logger.warning("⚠️  Continuing with fallback IPs")
+
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
