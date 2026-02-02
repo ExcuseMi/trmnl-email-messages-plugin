@@ -651,8 +651,12 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
         elapsed = time.time() - start_time
         logger.info(f"{req_prefix} ✓ Fetched {len(messages)} messages in {elapsed:.2f}s")
 
-        # Sort by timestamp, newest first
-        messages.sort(key=lambda x: x['timestamp'], reverse=True)
+        # Sort by timestamp, newest first (parse ISO format with timezone)
+        from datetime import datetime
+        messages.sort(
+            key=lambda x: datetime.fromisoformat(x['timestamp']),
+            reverse=True
+        )
 
         return messages
 
