@@ -340,5 +340,5 @@ custom_fields:
   - Numeric (12/18/24): numeric
   - ISO Date (2024-12-18): iso
   help_text: Choose based on your display size and personal preference.
-name: Email Messages
+name: Email Messages (IMAP)
 refresh_interval: 1440
