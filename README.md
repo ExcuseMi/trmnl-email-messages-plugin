@@ -85,10 +85,10 @@ MIT License - See LICENSE file for details
 <!-- PLUGIN_STATS_START -->
 ## 🚀 TRMNL Plugins
 
-*Last updated: 2026-02-05 16:16:48 UTC*
+*Last updated: 2026-02-05 16:28:59 UTC*
 
 
-## <img src="assets/plugin-images/198482_icon.png" alt="Email Messages (IMAP) icon" width="32"/> [Email Messages (IMAP)](https://usetrmnl.com/recipes/198482)
+## <img src="assets/plugin-images/198482_icon.svg" alt="Email Messages (IMAP) icon" width="32"/> [Email Messages (IMAP)](https://usetrmnl.com/recipes/198482)
 
 ![Email Messages (IMAP) screenshot](assets/plugin-images/198482_screenshot.png)
 
