@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py .
 COPY entrypoint.sh .
 COPY mock-data.json .
+COPY modules/ ./modules/
 
 # Make entrypoint executable
 RUN chmod +x entrypoint.sh
