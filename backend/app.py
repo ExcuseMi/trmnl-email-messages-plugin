@@ -527,7 +527,7 @@ def register_routes(app):
         if limit > MAX_MESSAGES_LIMIT:
             limit = MAX_MESSAGES_LIMIT
 
-        # Parse boolean flags (support both "yes"/"no" and "true"/"false")
+        # Parse boolean flags
         unread_only = data.get('unread_only', False)
         if isinstance(unread_only, str):
             unread_only = unread_only.lower() in ('yes', 'true')
@@ -581,7 +581,9 @@ def register_routes(app):
 
         # Fetch from Gmail API
         try:
-            messages = await gmail_provider.fetch_messages(
+            # Fetch user email and messages in parallel
+            user_email_task = gmail_provider.get_user_email(oauth_token, request_id)
+            messages_task = gmail_provider.fetch_messages(
                 oauth_token=oauth_token,
                 folder=folder,
                 limit=limit,
@@ -592,10 +594,14 @@ def register_routes(app):
                 request_id=request_id
             )
 
+            # Wait for both to complete
+            user_email, messages = await asyncio.gather(user_email_task, messages_task)
+
             # Simple response structure (same as /messages)
             response_data = {
                 'success': True,
                 'provider': 'gmail_api',
+                'email': user_email or 'unknown',  # User's email address
                 'folder': folder,
                 'count': len(messages),
                 'unread_only': unread_only,

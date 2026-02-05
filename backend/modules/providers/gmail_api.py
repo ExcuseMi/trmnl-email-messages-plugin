@@ -269,3 +269,43 @@ class GmailAPIProvider:
                 return datetime.now().isoformat()
         except Exception:
             return datetime.now().isoformat()
+
+
+    async def get_user_email(
+            self,
+            oauth_token: str,
+            request_id: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Fetch authenticated user's email address
+
+        Args:
+            oauth_token: OAuth2 access token
+            request_id: Request ID for logging
+
+        Returns:
+            User's email address or None
+        """
+        req_prefix = f"[{request_id}]" if request_id else ""
+
+        try:
+            headers = {
+                'Authorization': f'Bearer {oauth_token}',
+                'Accept': 'application/json'
+            }
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                profile_url = f'{self.GMAIL_API_BASE}/users/me/profile'
+                response = await client.get(profile_url, headers=headers)
+
+                if response.status_code == 401:
+                    raise GmailAuthError('OAuth token expired or invalid')
+
+                response.raise_for_status()
+                profile_data = response.json()
+
+                return profile_data.get('emailAddress')
+
+        except Exception as e:
+            logger.warning(f"{req_prefix} Failed to fetch user email: {e}")
+            return None
