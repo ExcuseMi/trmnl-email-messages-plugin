@@ -46,7 +46,7 @@ IMAP_FETCH_TIMEOUT = int(os.getenv('IMAP_FETCH_TIMEOUT', '30'))
 MAX_MESSAGES_LIMIT = int(os.getenv('MAX_MESSAGES_LIMIT', '50'))
 
 # TRMNL API endpoint for IP addresses
-TRMNL_IPS_API = 'https://usetrmnl.com/api/ips'
+TRMNL_IPS_API = 'https://trmnl.com/api/ips'
 
 # Configure logging for Docker/production
 log_handler = logging.StreamHandler(sys.stdout)
