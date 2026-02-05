@@ -278,6 +278,7 @@ def register_routes(app):
     """Register all Flask routes"""
 
     @app.route('/messages', methods=['GET', 'POST'])
+    @app.route('/imap/messages', methods=['GET', 'POST'])
     @require_whitelisted_ip
     async def get_messages():
         """
@@ -494,8 +495,7 @@ def register_routes(app):
                 'code': 'UNEXPECTED_ERROR'
             }), 200
 
-    @app.route('/gmail', methods=['GET', 'POST'])
-    @require_whitelisted_ip
+    @app.route('/gmail/messages', methods=['GET', 'POST'])    @require_whitelisted_ip
     async def get_gmail_messages():
         """
         Gmail REST API endpoint - OAuth only
