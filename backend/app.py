@@ -30,6 +30,11 @@ from modules.providers.gmail_api import (
     GmailAPIError,
     GmailAuthError
 )
+from modules.providers.outlook_api import (
+    OutlookAPIProvider,
+    OutlookAPIError,
+    OutlookAuthError
+)
 from modules.utils.cache import CacheManager
 
 # Suppress warnings
@@ -691,6 +696,194 @@ def register_routes(app):
                 'code': 'UNEXPECTED_ERROR'
             }), 200
 
+    @app.route('/outlook/messages', methods=['GET', 'POST'])
+    @require_whitelisted_ip
+    async def get_outlook_messages():
+        """
+        Outlook/Microsoft Graph API endpoint - OAuth only
+        Returns same simple structure as /messages endpoint
+
+        Required OAuth scope: https://graph.microsoft.com/Mail.Read
+        """
+        request_id = str(uuid.uuid4())[:8]
+        client_ip = get_client_ip()
+
+        # Extract parameters
+        if request.method == 'POST':
+            data = request.json
+        else:
+            data = request.args
+
+        oauth_token = data.get('oauth_access_token')
+
+        if not oauth_token:
+            logger.warning(f"[{request_id}] ✗ No OAuth token from {client_ip}")
+            return jsonify({
+                'error': 'Missing required parameter',
+                'required': ['oauth_access_token']
+            }), 400
+
+        # Parse parameters
+        folder = data.get('folder', 'inbox')
+        limit = int(data.get('limit', 10))
+
+        if limit > MAX_MESSAGES_LIMIT:
+            limit = MAX_MESSAGES_LIMIT
+
+        # Parse boolean flags
+        unread_only = data.get('unread_only', False)
+        if isinstance(unread_only, str):
+            unread_only = unread_only.lower() in ('yes', 'true')
+
+        flagged_only = data.get('flagged_only', False)
+        if isinstance(flagged_only, str):
+            flagged_only = flagged_only.lower() in ('yes', 'true')
+
+        # Parse from_emails
+        from_emails = data.get('from_emails')
+        if from_emails:
+            if isinstance(from_emails, str):
+                from_emails = [email.strip() for email in from_emails.split(',') if email.strip()]
+            elif not isinstance(from_emails, list):
+                from_emails = []
+        else:
+            from_emails = []
+
+        # Log request
+        filters = []
+        if unread_only:
+            filters.append("unread")
+        if flagged_only:
+            filters.append("flagged")
+        if from_emails:
+            filters.append(f"from={len(from_emails)} senders")
+
+        filter_str = f" ({', '.join(filters)})" if filters else ""
+        logger.info(f"[{request_id}] 📧 Outlook API → {folder} (limit={limit}){filter_str}")
+
+        # Generate cache key
+        cache_params = {
+            'provider': 'outlook_api',
+            'folder': folder,
+            'limit': limit,
+            'unread_only': unread_only,
+            'flagged_only': flagged_only,
+            'from_emails': sorted(from_emails) if from_emails else []
+        }
+
+        cache_key = cache_manager.generate_key('outlook', cache_params)
+
+        # Check cache
+        cached_response = cache_manager.get(cache_key)
+        if cached_response:
+            logger.info(f"[{request_id}] 💾 Cache HIT")
+            return jsonify(cached_response)
+
+        # Fetch from Outlook API
+        try:
+            # Fetch user email and messages in parallel
+            user_email_task = outlook_provider.get_user_email(oauth_token, request_id)
+            messages_task = outlook_provider.fetch_messages(
+                oauth_token=oauth_token,
+                folder=folder,
+                limit=limit,
+                unread_only=unread_only,
+                flagged_only=flagged_only,
+                from_emails=from_emails,
+                request_id=request_id
+            )
+
+            # Wait for both to complete
+            user_email, messages = await asyncio.gather(user_email_task, messages_task)
+
+            # Simple response structure
+            response_data = {
+                'success': True,
+                'provider': 'outlook_api',
+                'email': user_email or 'unknown',
+                'folder': folder,
+                'count': len(messages),
+                'unread_only': unread_only,
+                'flagged_only': flagged_only,
+                'messages': messages,
+                'fetched_at': datetime.now().isoformat()
+            }
+
+            if from_emails:
+                response_data['from_emails'] = from_emails
+
+            # Cache successful response
+            cache_manager.set(cache_key, response_data)
+
+            return jsonify(response_data)
+
+        except OutlookAuthError as e:
+            cached_fallback = cache_manager.get(cache_key)
+
+            if cached_fallback:
+                logger.warning(f"[{request_id}] 🔒 Auth failed, returning stale cache")
+                cached_fallback['success'] = False
+                cached_fallback['cached'] = True
+                cached_fallback['cache_warning'] = 'OAuth authentication failed - returning cached data'
+                cached_fallback['error'] = {
+                    'message': 'OAuth token expired or invalid. Please reconnect Outlook in TRMNL.',
+                    'type': 'AUTH_FAILED',
+                    'occurred_at': datetime.now().isoformat()
+                }
+                return jsonify(cached_fallback), 200
+
+            logger.warning(f"[{request_id}] 🔒 Auth failed (no cache)")
+            return jsonify({
+                'success': False,
+                'error': 'Authentication Failed',
+                'message': 'OAuth token expired or invalid. Please reconnect Outlook in TRMNL.',
+                'code': 'AUTH_FAILED'
+            }), 200
+
+        except OutlookAPIError as e:
+            cached_fallback = cache_manager.get(cache_key)
+
+            if cached_fallback:
+                logger.warning(f"[{request_id}] ⚠️  API error, returning stale cache")
+                cached_fallback['success'] = False
+                cached_fallback['cached'] = True
+                cached_fallback['cache_warning'] = 'Outlook API error - returning cached data'
+                cached_fallback['error'] = {
+                    'message': str(e),
+                    'type': 'API_ERROR',
+                    'occurred_at': datetime.now().isoformat()
+                }
+                return jsonify(cached_fallback), 200
+
+            logger.error(f"[{request_id}] ✗ API error: {e} (no cache)")
+            return jsonify({
+                'success': False,
+                'error': 'API Error',
+                'message': str(e),
+                'code': 'API_ERROR'
+            }), 200
+
+        except Exception as e:
+            cached_fallback = cache_manager.get(cache_key)
+
+            if cached_fallback:
+                logger.warning(f"[{request_id}] ⚠️  Unexpected error, returning stale cache")
+                cached_fallback['success'] = False
+                cached_fallback['cached'] = True
+                cached_fallback['error'] = {
+                    'message': str(e),
+                    'type': 'UNEXPECTED_ERROR',
+                    'occurred_at': datetime.now().isoformat()
+                }
+                return jsonify(cached_fallback), 200
+
+            logger.error(f"[{request_id}] ✗ Unexpected error: {e}")
+            return jsonify({
+                'success': False,
+                'error': 'Unexpected Error',
+                'message': str(e),
+                'code': 'UNEXPECTED_ERROR'
+            }), 200
     @app.route('/health')
     def health():
         """Health check endpoint"""
@@ -704,8 +897,8 @@ def register_routes(app):
         health_data = {
             'status': 'healthy',
             'service': 'unified-email-reader',
-            'providers': ['imap', 'gmail_api'],
-            'features': ['password_auth', 'oauth2_auth', 'email_formatting'],
+            'providers': ['imap', 'gmail_api', 'outlook_api'],  # Added outlook_api
+            'features': ['password_auth', 'oauth2_auth'],
             'python': sys.version.split()[0],
             'timestamp': datetime.now().isoformat()
         }
