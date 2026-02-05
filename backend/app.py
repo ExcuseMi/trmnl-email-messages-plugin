@@ -583,47 +583,55 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
         try:
             if oauth_token:
                 # OAuth2 authentication using XOAUTH2
+                # Gmail IMAP requires a two-step XOAUTH2 flow:
+                # 1. Send AUTHENTICATE XOAUTH2
+                # 2. Server responds with +
+                # 3. Send base64 auth string
+                # 4. Server responds OK or NO
+
                 auth_string = generate_oauth2_string(username, oauth_token)
 
-                # Get a new tag
+                logger.debug(f"{req_prefix} Starting OAuth2 XOAUTH2 authentication")
+
+                # Step 1: Send AUTHENTICATE XOAUTH2 command (without the auth string)
                 tag = client.protocol.new_tag()
                 if isinstance(tag, bytes):
                     tag = tag.decode()
 
-                # Build AUTHENTICATE command
-                auth_command = f'{tag} AUTHENTICATE XOAUTH2 {auth_string}\r\n'
+                # Send AUTHENTICATE XOAUTH2 (triggers server to send + continuation)
+                auth_cmd = f'{tag} AUTHENTICATE XOAUTH2\r\n'
+                client.protocol.transport.write(auth_cmd.encode())
 
-                logger.debug(f"{req_prefix} Sending OAuth command with tag: {tag}")
+                # Step 2: Wait for server's + continuation response
+                await asyncio.sleep(0.2)
 
-                # Send the command
-                client.protocol.transport.write(auth_command.encode())
+                # Step 3: Send the base64 auth string as continuation
+                client.protocol.transport.write(f'{auth_string}\r\n'.encode())
 
-                # Wait for response by sleeping briefly and checking state
+                # Step 4: Wait for final OK/NO response
                 await asyncio.sleep(0.5)
 
-                # Check if we got an error in the protocol
-                # The protocol will raise Abort on auth failure, which we'll catch below
-
-                # Try a simple command to verify we're authenticated
+                # The protocol should have processed the response by now
+                # Try a NOOP to verify we're authenticated
                 try:
-                    # If authentication succeeded, we should be able to run a command
-                    response = await asyncio.wait_for(
-                        client.protocol.execute(b'NOOP'),
+                    noop_response = await asyncio.wait_for(
+                        client.noop(),
                         timeout=5
                     )
 
-                    if response and response.result == 'OK':
+                    if noop_response.result == 'OK':
                         logger.debug(f"{req_prefix} ✓ OAuth authentication successful")
                     else:
-                        raise IMAPAuthenticationError('OAuth authentication failed')
+                        raise IMAPAuthenticationError('OAuth authentication verification failed')
 
-                except Exception as verify_error:
-                    # Check if it's an auth error
-                    error_str = str(verify_error).lower()
+                except Exception as e:
+                    error_str = str(e).lower()
                     if 'authenticationfailed' in error_str or 'invalid credentials' in error_str:
-                        raise IMAPAuthenticationError('OAuth token rejected by Gmail - token may be expired or invalid')
-                    else:
-                        raise IMAPAuthenticationError(f'OAuth verification failed: {verify_error}')
+                        raise IMAPAuthenticationError(
+                            'OAuth authentication failed. Token may be expired. '
+                            'Try disconnecting and reconnecting Gmail in TRMNL.'
+                        )
+                    raise IMAPAuthenticationError(f'OAuth verification error: {e}')
 
             else:
                 # Password authentication (original method)
@@ -637,12 +645,20 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
             authenticated = True
 
         except aioimaplib.aioimaplib.Abort as e:
-            # IMAP protocol errors - check if it's auth-related
             error_str = str(e).lower()
             if 'authenticationfailed' in error_str or 'invalid credentials' in error_str:
-                raise IMAPAuthenticationError('OAuth token rejected by Gmail - token may be expired or invalid')
+                if oauth_token:
+                    raise IMAPAuthenticationError(
+                        'OAuth token rejected by Gmail. Token may be expired or revoked. '
+                        'Disconnect and reconnect Gmail in TRMNL to get a fresh token.'
+                    )
+                else:
+                    raise IMAPAuthenticationError('Invalid password')
             else:
-                raise IMAPAuthenticationError(f'IMAP protocol error during authentication: {str(e)}')
+                if authenticated:
+                    raise IMAPProtocolError(f"IMAP protocol error: {str(e)}")
+                else:
+                    raise IMAPAuthenticationError(f'Authentication protocol error: {str(e)}')
 
         except asyncio.TimeoutError:
             raise IMAPTimeoutError(f'Login operation timed out after {IMAP_LOGIN_TIMEOUT}s')
@@ -655,7 +671,6 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
                 raise IMAPAuthenticationError(str(e))
             else:
                 raise IMAPConnectionError(f'Login failed: {str(e)}')
-            
         # Select folder
         try:
             select_response = await asyncio.wait_for(
