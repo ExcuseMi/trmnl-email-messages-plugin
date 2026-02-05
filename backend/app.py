@@ -30,7 +30,6 @@ from modules.providers.gmail_api import (
     GmailAPIError,
     GmailAuthError
 )
-from modules.formatters.email_formatter import EmailFormatter
 from modules.utils.cache import CacheManager
 
 # Suppress warnings
@@ -91,7 +90,7 @@ imap_provider = IMAPProvider(
     fetch_timeout=IMAP_FETCH_TIMEOUT
 )
 gmail_provider = GmailAPIProvider(timeout=30)
-email_formatter = EmailFormatter()
+# email_formatter = EmailFormatter()
 cache_manager = None  # Initialized in startup
 
 
@@ -500,7 +499,7 @@ def register_routes(app):
     async def get_gmail_messages():
         """
         Gmail REST API endpoint - OAuth only
-        Supports all YAML configuration options
+        Returns same simple structure as /messages endpoint
         """
         request_id = str(uuid.uuid4())[:8]
         client_ip = get_client_ip()
@@ -528,8 +527,14 @@ def register_routes(app):
         if limit > MAX_MESSAGES_LIMIT:
             limit = MAX_MESSAGES_LIMIT
 
-        unread_only = data.get('unread_only', 'no') == 'yes'
-        flagged_only = data.get('flagged_only', 'no') == 'yes'
+        # Parse boolean flags (support both "yes"/"no" and "true"/"false")
+        unread_only = data.get('unread_only', False)
+        if isinstance(unread_only, str):
+            unread_only = unread_only.lower() in ('yes', 'true')
+
+        flagged_only = data.get('flagged_only', False)
+        if isinstance(flagged_only, str):
+            flagged_only = flagged_only.lower() in ('yes', 'true')
 
         # Parse from_emails
         from_emails = data.get('from_emails')
@@ -540,13 +545,6 @@ def register_routes(app):
                 from_emails = []
         else:
             from_emails = []
-
-        # Display formatting options
-        group_by_date = data.get('group_by_date', 'yes') == 'yes'
-        time_format = data.get('time_format', '24h')
-        date_format = data.get('date_format', 'short')
-        show_sender_email = data.get('show_sender_email', 'no') == 'yes'
-        read_subject_regular = data.get('read_subject_regular', 'yes') == 'yes'
 
         # Log request
         filters = []
@@ -594,36 +592,24 @@ def register_routes(app):
                 request_id=request_id
             )
 
-            # Format messages
-            formatted = email_formatter.format_messages(
-                messages,
-                group_by_date=group_by_date,
-                time_format=time_format,
-                date_format=date_format,
-                show_sender_email=show_sender_email,
-                read_subject_regular=read_subject_regular
-            )
-
+            # Simple response structure (same as /messages)
             response_data = {
                 'success': True,
                 'provider': 'gmail_api',
                 'folder': folder,
                 'count': len(messages),
-                'filters': {
-                    'unread_only': unread_only,
-                    'flagged_only': flagged_only,
-                    'gmail_category': gmail_category,
-                    'from_emails': from_emails
-                },
-                'display': {
-                    'group_by_date': group_by_date,
-                    'time_format': time_format,
-                    'date_format': date_format,
-                    'show_sender_email': show_sender_email
-                },
-                'data': formatted,
+                'unread_only': unread_only,
+                'flagged_only': flagged_only,
+                'messages': messages,
                 'fetched_at': datetime.now().isoformat()
             }
+
+            # Add optional fields if present
+            if gmail_category:
+                response_data['gmail_category'] = gmail_category
+
+            if from_emails:
+                response_data['from_emails'] = from_emails
 
             # Cache successful response
             cache_manager.set(cache_key, response_data)
