@@ -83,14 +83,14 @@ MIT License - See LICENSE file for details
 
 
 <!-- PLUGIN_STATS_START -->
-## 🚀 TRMNL Plugin
+## 🚀 TRMNL Plugins
 
-*Last updated: 2026-02-05 06:53:37 UTC*
+*Last updated: 2026-02-05 16:16:48 UTC*
 
 
-## <img src="assets/plugin-images/198482_icon.png" alt="Email Messages icon" width="32"/> [Email Messages](https://usetrmnl.com/recipes/198482)
+## <img src="assets/plugin-images/198482_icon.png" alt="Email Messages (IMAP) icon" width="32"/> [Email Messages (IMAP)](https://usetrmnl.com/recipes/198482)
 
-![Email Messages screenshot](assets/plugin-images/198482_screenshot.png)
+![Email Messages (IMAP) screenshot](assets/plugin-images/198482_screenshot.png)
 
 ### Description
 Display your recent emails on your TRMNL display.<br /><br />
@@ -107,6 +107,17 @@ This plugin connects to your email account via IMAP and shows your latest messag
 |--------|-------|
 | Installs | 1 |
 | Forks | 23 |
+
+---
+
+
+## 🔒 Plugin ID: 238783
+
+**Status**: ⏳ Not yet published on TRMNL or API unavailable
+
+This plugin is configured but either hasn't been published to the TRMNL marketplace yet or the API is temporarily unavailable.
+
+**Plugin URL**: https://usetrmnl.com/recipes/238783
 
 ---
 
