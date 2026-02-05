@@ -1,6 +1,6 @@
 """
 Async IMAP Email Reader - Flask Backend for TRMNL
-Optimized version with resilient error handling and cache-first strategy
+Optimized version with resilient error handling, cache-first strategy, and OAuth2 support
 """
 
 from flask import Flask, request, jsonify
@@ -23,6 +23,7 @@ import redis
 import uuid
 import ssl
 import warnings
+import base64
 
 # Suppress warnings
 warnings.filterwarnings('ignore', category=ResourceWarning)
@@ -136,9 +137,20 @@ def mask_email(email_addr):
     return f"{masked_local}@{domain}"
 
 
-def format_auth_error(email_addr, error_message):
+def format_auth_error(email_addr, error_message, is_oauth=False):
     """Format authentication errors with helpful guidance"""
-    # Detect email provider
+
+    # OAuth-specific error message
+    if is_oauth:
+        return (
+            "OAuth authentication failed. Please check that:\n"
+            "1. Your OAuth connection in TRMNL is still valid\n"
+            "2. The required scopes are granted (IMAP access)\n"
+            "3. Your email provider supports OAuth2/XOAUTH2\n"
+            "You may need to reconnect your account in TRMNL settings."
+        )
+
+    # Detect email provider for password-based auth
     domain = email_addr.lower().split('@')[-1] if '@' in email_addr else ''
 
     base_msg = "Unable to connect to your email account. "
@@ -329,6 +341,7 @@ def generate_cache_key(params):
         'server': params['server'],
         'port': params['port'],
         'username': params['username'],
+        'auth_type': 'oauth' if params.get('oauth_token') else 'password',  # OAuth support
         'folder': params['folder'],
         'limit': params['limit'],
         'unread_only': params['unread_only'],
@@ -503,6 +516,15 @@ def parse_message_data(header_data, msg_id, is_read=True, is_flagged=False):
     }
 
 
+def generate_oauth2_string(username, oauth_token):
+    """
+    Generate XOAUTH2 authentication string for IMAP
+    Format: base64(user={username}\x01auth=Bearer {token}\x01\x01)
+    """
+    auth_string = f"user={username}\x01auth=Bearer {oauth_token}\x01\x01"
+    return base64.b64encode(auth_string.encode()).decode()
+
+
 async def cleanup_imap_connection(client, request_id=None):
     """Safely cleanup IMAP connection with proper timeout handling"""
     if not client:
@@ -527,9 +549,9 @@ async def cleanup_imap_connection(client, request_id=None):
         logger.debug(f"{req_prefix} ⚠️  IMAP logout error: {e}")
 
 
-async def fetch_email_messages(server, port, username, password, folder, limit, unread_only, gmail_category=None, from_emails=None, flagged_only=False, request_id=None):
+async def fetch_email_messages(server, port, username, password, folder, limit, unread_only, gmail_category=None, from_emails=None, flagged_only=False, oauth_token=None, request_id=None):
     """
-    Optimized async IMAP fetch with improved error handling and connection management
+    Optimized async IMAP fetch with improved error handling, connection management, and OAuth2 support
     """
     client = None
     req_prefix = f"[{request_id}]" if request_id else ""
@@ -557,14 +579,35 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
         except asyncio.TimeoutError:
             raise IMAPConnectionError(f'Connection timeout to {server}:{port}')
 
-        # Login - use specific exception types
+        # Login - OAuth or Password
         try:
-            login_response = await asyncio.wait_for(
-                client.login(username, password),
-                timeout=IMAP_LOGIN_TIMEOUT
-            )
-            if login_response.result != 'OK':
-                raise IMAPAuthenticationError('Invalid credentials')
+            if oauth_token:
+                # OAuth2 authentication using XOAUTH2
+                auth_string = generate_oauth2_string(username, oauth_token)
+
+                # Send AUTHENTICATE XOAUTH2 command
+                login_response = await asyncio.wait_for(
+                    client.protocol.execute(
+                        aioimaplib.Commands.AUTHENTICATE,
+                        'XOAUTH2',
+                        auth_string
+                    ),
+                    timeout=IMAP_LOGIN_TIMEOUT
+                )
+
+                if login_response.result != 'OK':
+                    raise IMAPAuthenticationError('OAuth authentication failed')
+
+                logger.debug(f"{req_prefix} ✓ OAuth authentication successful")
+
+            else:
+                # Password authentication (original method)
+                login_response = await asyncio.wait_for(
+                    client.login(username, password),
+                    timeout=IMAP_LOGIN_TIMEOUT
+                )
+                if login_response.result != 'OK':
+                    raise IMAPAuthenticationError('Invalid credentials')
 
             authenticated = True  # Mark as successfully authenticated
 
@@ -805,11 +848,13 @@ def get_request_params():
     server = data.get('server')
     username = data.get('username')
     password = data.get('password')
+    oauth_token = data.get('oauth_access_token')  # OAuth support
 
-    if not all([server, username, password]):
+    # Either password OR oauth_token required
+    if not all([server, username]) or not (password or oauth_token):
         return None, {
             'error': 'Missing required parameters',
-            'required': ['server', 'username', 'password']
+            'required': ['server', 'username', 'password OR oauth_access_token']
         }, 400
 
     port = int(data.get('port', 993))
@@ -849,6 +894,7 @@ def get_request_params():
         'port': port,
         'username': username,
         'password': password,
+        'oauth_token': oauth_token,  # OAuth support
         'folder': folder,
         'limit': limit,
         'unread_only': unread_only,
@@ -865,7 +911,7 @@ def register_routes(app):
     @require_whitelisted_ip
     async def get_messages():
         """
-        Get latest email messages via IMAP with resilient cache fallback
+        Get latest email messages via IMAP with resilient cache fallback and OAuth2 support
 
         ALWAYS returns 200 when cached data is available, regardless of error type.
         This ensures TRMNL devices continue to display data even during transient failures.
@@ -880,6 +926,9 @@ def register_routes(app):
 
         # Mask email for logging
         masked_username = mask_email(params['username'])
+
+        # Determine auth method for logging
+        auth_method = "OAuth" if params.get('oauth_token') else "Password"
 
         # Build compact log message
         filters = []
@@ -898,7 +947,7 @@ def register_routes(app):
 
         filter_str = f" ({', '.join(filters)})" if filters else ""
 
-        logger.info(f"[{request_id}] 📨 {masked_username} → {params['folder']} (limit={params['limit']}){filter_str}")
+        logger.info(f"[{request_id}] 📨 {masked_username} ({auth_method}) → {params['folder']} (limit={params['limit']}){filter_str}")
 
         # Check for mock data mode
         if params['username'] == 'master@trmnl.com':
@@ -922,13 +971,14 @@ def register_routes(app):
                 params['server'],
                 params['port'],
                 params['username'],
-                params['password'],
+                params.get('password'),
                 params['folder'],
                 params['limit'],
                 params['unread_only'],
                 params['gmail_category'],
                 params['from_emails'],
                 params['flagged_only'],
+                params.get('oauth_token'),  # OAuth token
                 request_id
             )
 
@@ -940,7 +990,8 @@ def register_routes(app):
                 'unread_only': params['unread_only'],
                 'flagged_only': params['flagged_only'],
                 'messages': messages,
-                'fetched_at': datetime.now().isoformat()
+                'fetched_at': datetime.now().isoformat(),
+                'auth_method': auth_method  # Include auth method in response
             }
 
             if params['gmail_category']:
@@ -957,32 +1008,35 @@ def register_routes(app):
         except IMAPAuthenticationError as e:
             # Authentication failure - check for cached data first
             error_msg = str(e)
+            is_oauth = bool(params.get('oauth_token'))
             cached_fallback = get_cached_response(cache_key)
 
             if cached_fallback:
                 # ALWAYS return 200 with cached data, even for auth errors
-                logger.warning(f"[{request_id}] 🔒 Auth failed, returning stale cache (200 OK)")
+                logger.warning(f"[{request_id}] 🔒 Auth failed ({auth_method}), returning stale cache (200 OK)")
 
                 cached_fallback['success'] = False
                 cached_fallback['cached'] = True
                 cached_fallback['cache_warning'] = 'Authentication failed - returning cached data'
                 cached_fallback['error'] = {
-                    'message': format_auth_error(params['username'], error_msg),
+                    'message': format_auth_error(params['username'], error_msg, is_oauth),
                     'type': 'AUTH_FAILED',
+                    'auth_method': auth_method,
                     'occurred_at': datetime.now().isoformat()
                 }
 
                 return jsonify(cached_fallback), 200  # 200 OK with error info
 
             # No cache available - return error details
-            friendly_error = format_auth_error(params['username'], error_msg)
-            logger.warning(f"[{request_id}] 🔒 Auth failed for {masked_username} (no cache)")
+            friendly_error = format_auth_error(params['username'], error_msg, is_oauth)
+            logger.warning(f"[{request_id}] 🔒 Auth failed ({auth_method}) for {masked_username} (no cache)")
 
             return jsonify({
                 'success': False,
                 'error': 'Authentication Failed',
                 'message': friendly_error,
                 'code': 'AUTH_FAILED',
+                'auth_method': auth_method,
                 'email': params['username']
             }), 200
 
@@ -1011,11 +1065,8 @@ def register_routes(app):
             # No cache available - return appropriate error
             logger.error(f"[{request_id}] ✗ {error_type}: {error_msg} (no cache)")
 
-            # Map to appropriate HTTP status
-            if isinstance(e, IMAPTimeoutError):
-                status = 200  # Gateway Timeout
-            else:
-                status = 200  # Service Unavailable
+            # Always return 200 for TRMNL compatibility
+            status = 200
 
             return jsonify({
                 'success': False,
@@ -1061,6 +1112,7 @@ def register_routes(app):
         health_data = {
             'status': 'healthy',
             'service': 'imap-email-reader',
+            'features': ['password_auth', 'oauth2_auth'],  # OAuth support indicator
             'python': '3.13',
             'flask': 'async',
             'timestamp': datetime.now().isoformat()
@@ -1092,9 +1144,10 @@ def register_routes(app):
 app = create_app()
 
 logger.info("=" * 60)
-logger.info("🚀 IMAP Email Reader (Resilient Edition)")
+logger.info("🚀 IMAP Email Reader (Resilient Edition with OAuth2)")
 logger.info(f"   Python {sys.version.split()[0]}")
 logger.info(f"   Log Level: {LOG_LEVEL}")
+logger.info(f"   Auth Methods: Password + OAuth2 (XOAUTH2)")
 logger.info(f"   Cache Strategy: Always return 200 with cached data on errors")
 logger.info("=" * 60)
 
