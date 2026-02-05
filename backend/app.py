@@ -580,35 +580,43 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
             raise IMAPConnectionError(f'Connection timeout to {server}:{port}')
 
         # Login - OAuth or Password
-        # Login - OAuth or Password
         try:
             if oauth_token:
                 # OAuth2 authentication using XOAUTH2
                 auth_string = generate_oauth2_string(username, oauth_token)
 
-                # For Gmail XOAUTH2: send as single-line AUTHENTICATE command
-                # Format: AUTHENTICATE XOAUTH2 <base64_auth_string>
-                tag = client.protocol.new_tag().decode()
-                auth_command = f'{tag} AUTHENTICATE XOAUTH2 {auth_string}\r\n'
+                # Create and send AUTHENTICATE XOAUTH2 command
+                try:
+                    # Method 1: Try using execute if available
+                    login_response = await asyncio.wait_for(
+                        client.protocol.execute(
+                            b'AUTHENTICATE',
+                            b'XOAUTH2',
+                            auth_string.encode()
+                        ),
+                        timeout=IMAP_LOGIN_TIMEOUT
+                    )
 
-                # Send the command
-                client.protocol.transport.write(auth_command.encode())
+                    if hasattr(login_response, 'result') and login_response.result != 'OK':
+                        raise IMAPAuthenticationError('OAuth authentication failed')
 
-                # Wait for server response
-                response = await asyncio.wait_for(
-                    client.protocol.wait_server_push(),
-                    timeout=IMAP_LOGIN_TIMEOUT
-                )
+                except AttributeError:
+                    # Method 2: Fallback to raw command
+                    tag = client.protocol.new_tag().decode()
+                    auth_command = f'{tag} AUTHENTICATE XOAUTH2 {auth_string}\r\n'
+                    client.protocol.transport.write(auth_command.encode())
 
-                # Check if authentication succeeded
-                if not any(tag.encode() + b' OK' in line for line in response.lines):
-                    # Try to get error details
-                    error_msg = 'OAuth authentication failed'
-                    for line in response.lines:
-                        if b'NO' in line or b'BAD' in line:
-                            error_msg = line.decode('utf-8', errors='ignore')
-                            break
-                    raise IMAPAuthenticationError(error_msg)
+                    # Wait for response with timeout
+                    await asyncio.sleep(0.1)  # Brief pause for server processing
+                    response = await asyncio.wait_for(
+                        client.protocol.wait_server_push(),
+                        timeout=IMAP_LOGIN_TIMEOUT
+                    )
+
+                    # Check for OK response
+                    response_text = b''.join(response.lines).decode('utf-8', errors='ignore')
+                    if f'{tag} OK' not in response_text:
+                        raise IMAPAuthenticationError(f'OAuth authentication failed: {response_text}')
 
                 logger.debug(f"{req_prefix} ✓ OAuth authentication successful")
 
@@ -621,14 +629,13 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
                 if login_response.result != 'OK':
                     raise IMAPAuthenticationError('Invalid credentials')
 
-            authenticated = True  # Mark as successfully authenticated
+            authenticated = True
 
         except asyncio.TimeoutError:
             raise IMAPTimeoutError(f'Login operation timed out after {IMAP_LOGIN_TIMEOUT}s')
         except IMAPAuthenticationError:
-            raise  # Re-raise auth errors as-is
+            raise
         except Exception as e:
-            # Classify other login exceptions
             error_str = str(e).lower()
             if any(keyword in error_str for keyword in
                    ['authentication', 'credentials', 'password', 'authenticationfailed']):
