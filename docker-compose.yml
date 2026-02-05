@@ -4,14 +4,14 @@ services:
     restart: unless-stopped
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
     networks:
-      - imap-network-oauth
+      - imap-network
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
     volumes:
-      - redis_data_oauth:/data
+      - redis_data:/data
 
   imap-reader:
     build:
@@ -20,9 +20,9 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    container_name: imap-reader-oauth
+    container_name: imap-reader
     ports:
-      - "5025:5000"
+      - "5005:5000"
     env_file:
       - .env
     restart: unless-stopped
@@ -30,7 +30,7 @@ services:
       - PYTHONUNBUFFERED=1
       - PYTHONWARNINGS=ignore
     networks:
-      - imap-network-oauth
+      - imap-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
@@ -51,8 +51,8 @@ services:
           cpus: '0.5'
           memory: 256M
 networks:
-  imap-network-oauth:
+  imap-network:
     driver: bridge
 
 volumes:
-  redis_data_oauth:
+  redis_data:
