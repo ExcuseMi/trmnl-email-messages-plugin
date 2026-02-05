@@ -580,18 +580,16 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
             raise IMAPConnectionError(f'Connection timeout to {server}:{port}')
 
         # Login - OAuth or Password
+        # Login - OAuth or Password
         try:
             if oauth_token:
                 # OAuth2 authentication using XOAUTH2
                 auth_string = generate_oauth2_string(username, oauth_token)
 
-                # Send AUTHENTICATE XOAUTH2 command
+                # aioimaplib XOAUTH2 authentication
+                # Use the authenticate method with a callback
                 login_response = await asyncio.wait_for(
-                    client.protocol.execute(
-                        aioimaplib.Commands.AUTHENTICATE,
-                        'XOAUTH2',
-                        auth_string
-                    ),
+                    client.authenticate('XOAUTH2', lambda x: auth_string),
                     timeout=IMAP_LOGIN_TIMEOUT
                 )
 
