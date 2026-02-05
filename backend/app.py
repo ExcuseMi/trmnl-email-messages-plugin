@@ -585,7 +585,7 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
                 # OAuth2 authentication using XOAUTH2
                 auth_string = generate_oauth2_string(username, oauth_token)
 
-                # Get a new tag (might be bytes or str depending on aioimaplib version)
+                # Get a new tag
                 tag = client.protocol.new_tag()
                 if isinstance(tag, bytes):
                     tag = tag.decode()
@@ -593,33 +593,37 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
                 # Build AUTHENTICATE command
                 auth_command = f'{tag} AUTHENTICATE XOAUTH2 {auth_string}\r\n'
 
+                logger.debug(f"{req_prefix} Sending OAuth command with tag: {tag}")
+
                 # Send the command
                 client.protocol.transport.write(auth_command.encode())
 
-                # Wait for server response
-                response = await asyncio.wait_for(
-                    client.protocol.wait_server_push(),
-                    timeout=IMAP_LOGIN_TIMEOUT
-                )
+                # Wait for response by sleeping briefly and checking state
+                await asyncio.sleep(0.5)
 
-                # Check if authentication succeeded
-                success = False
-                error_msg = 'OAuth authentication failed'
+                # Check if we got an error in the protocol
+                # The protocol will raise Abort on auth failure, which we'll catch below
 
-                for line in response.lines:
-                    line_str = line.decode('utf-8', errors='ignore') if isinstance(line, bytes) else str(line)
+                # Try a simple command to verify we're authenticated
+                try:
+                    # If authentication succeeded, we should be able to run a command
+                    response = await asyncio.wait_for(
+                        client.protocol.execute(b'NOOP'),
+                        timeout=5
+                    )
 
-                    if f'{tag} OK' in line_str:
-                        success = True
-                        break
-                    elif f'{tag} NO' in line_str or f'{tag} BAD' in line_str:
-                        error_msg = line_str
-                        break
+                    if response and response.result == 'OK':
+                        logger.debug(f"{req_prefix} ✓ OAuth authentication successful")
+                    else:
+                        raise IMAPAuthenticationError('OAuth authentication failed')
 
-                if not success:
-                    raise IMAPAuthenticationError(error_msg)
-
-                logger.debug(f"{req_prefix} ✓ OAuth authentication successful")
+                except Exception as verify_error:
+                    # Check if it's an auth error
+                    error_str = str(verify_error).lower()
+                    if 'authenticationfailed' in error_str or 'invalid credentials' in error_str:
+                        raise IMAPAuthenticationError('OAuth token rejected by Gmail - token may be expired or invalid')
+                    else:
+                        raise IMAPAuthenticationError(f'OAuth verification failed: {verify_error}')
 
             else:
                 # Password authentication (original method)
@@ -630,20 +634,28 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
                 if login_response.result != 'OK':
                     raise IMAPAuthenticationError('Invalid credentials')
 
-            authenticated = True  # Mark as successfully authenticated
+            authenticated = True
+
+        except aioimaplib.aioimaplib.Abort as e:
+            # IMAP protocol errors - check if it's auth-related
+            error_str = str(e).lower()
+            if 'authenticationfailed' in error_str or 'invalid credentials' in error_str:
+                raise IMAPAuthenticationError('OAuth token rejected by Gmail - token may be expired or invalid')
+            else:
+                raise IMAPAuthenticationError(f'IMAP protocol error during authentication: {str(e)}')
 
         except asyncio.TimeoutError:
             raise IMAPTimeoutError(f'Login operation timed out after {IMAP_LOGIN_TIMEOUT}s')
         except IMAPAuthenticationError:
-            raise  # Re-raise auth errors as-is
+            raise
         except Exception as e:
-            # Classify other login exceptions
             error_str = str(e).lower()
             if any(keyword in error_str for keyword in
                    ['authentication', 'credentials', 'password', 'authenticationfailed']):
                 raise IMAPAuthenticationError(str(e))
             else:
                 raise IMAPConnectionError(f'Login failed: {str(e)}')
+            
         # Select folder
         try:
             select_response = await asyncio.wait_for(
