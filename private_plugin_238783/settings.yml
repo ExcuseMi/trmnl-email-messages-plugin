@@ -1,0 +1,185 @@
+---
+strategy: polling
+no_screen_padding: 'no'
+dark_mode: 'no'
+static_data: ''
+polling_verb: post
+polling_url: https://trmnl.bettens.dev/email/gmail/messages
+polling_headers: "content-type=application/json\r\n"
+polling_body: "{\r\n  \"folder\": {{ folder | default: \"INBOX\" | json }},\r\n  \"limit\": {{ limit | default: 10 | plus: 0 }},\r\n  \"unread_only\": {% if unread_only == \"yes\" %}true{% else %}false{% endif %},\r\n  \"flagged_only\": {% if flagged_only == \"yes\" %}true{% else %}false{% endif %}\r\n  {% if gmail_category and gmail_category != \"\" %},\r\n  \"gmail_category\": {{ gmail_category | json }}\r\n  {% endif %}\r\n  {% if from_emails and from_emails != \"\" %},\r\n  \"from_emails\": {{ from_emails | json }}\r\n  {% endif %},\r\n \"oauth_access_token\": \"{{oauth_access_token}}\"\r\n}"
+id: 238783
+custom_fields:
+- keyname: author_bio
+  field_type: author_bio
+  name: About This Plugin
+  description: |
+    Display your recent GMail emails on your TRMNL display.<br /><br />
+    This plugin connects to your gmail account via oauth and shows your latest messages with customizable filters and display options.<br /><br />
+    <strong>Real-time updates:</strong> Shows the latest emails from your inbox<br />
+    <strong>Advanced filtering:</strong> Filter by sender, category, or importance<br />
+    <strong>Custom display:</strong> Control how emails appear on your screen<br />For IMAP support, use <a href="https://trmnl.com/recipes/198482/install">Email Messages (IMAP) Recipe</a>
+  category: email
+  github_url: https://github.com/ExcuseMi/trmnl-email-messages-plugin
+- keyname: folder
+  field_type: string
+  name: Mailbox Folder
+  description: Email folder to display messages from.
+  default: INBOX
+  placeholder: INBOX
+  help_text: |
+    <strong>Common folders:</strong><br />
+    • INBOX - Main inbox<br />
+    • Sent - Sent messages<br />
+    • Drafts - Draft messages<br />
+    • Trash - Deleted messages<br />
+    • Spam - Junk folder<br />
+    • [Custom] - Any folder name you've created<br /><br />
+    <em>Note: Folder names are case-sensitive in most IMAP servers.</em>
+- keyname: gmail_category
+  field_type: select
+  name: Gmail Category Filter
+  description: Filter emails by Gmail category.
+  default: ''
+  optional: true
+  options:
+  - All Categories: ''
+  - Primary (Personal): Primary
+  - Social (Social Networks): Social
+  - Promotions (Deals & Ads): Promotions
+  - Updates (Confirmations): Updates
+  - Forums (Mailing Lists): Forums
+  help_text: |
+    Gmail automatically sorts emails into categories:<br /><br />
+    <strong>Primary:</strong> Personal emails from people<br />
+    <strong>Social:</strong> Social network notifications<br />
+    <strong>Promotions:</strong> Deals, offers, marketing emails<br />
+    <strong>Updates:</strong> Confirmations, receipts, statements<br />
+    <strong>Forums:</strong> Mailing lists, newsletters, discussion groups<br /><br />
+    Select 'All Categories' to show emails from every category.
+- keyname: limit
+  field_type: number
+  name: Number of Messages
+  description: How many emails to display on your TRMNL screen.
+  default: 10
+  min: 1
+  max: 30
+  help_text: ''
+- keyname: unread_only
+  field_type: select
+  name: Show Unread Only
+  description: Display only unread email messages.
+  default: 'no'
+  optional: true
+  options:
+  - Yes - Unread only: 'yes'
+  - No - Show all: 'no'
+  help_text: |
+    <strong>Use cases:</strong><br />
+    • See what needs your attention<br />
+    • Monitor incoming emails<br />
+    • Focus on new messages only<br /><br />
+    <em>Tip: Combine with other filters for more specific results.</em>
+- keyname: flagged_only
+  field_type: select
+  name: Show Flagged Only
+  description: Display only flagged/starred email messages.
+  default: 'no'
+  optional: true
+  options:
+  - Yes - Important only: 'yes'
+  - No - Show all: 'no'
+  help_text: |
+    <strong>Great for:</strong><br />
+    • Tracking emails that need follow-up<br />
+    • Monitoring important conversations<br />
+    • Focusing on priority messages<br /><br />
+    <em>Flag emails in your email client to mark them as important.</em>
+- keyname: from_emails
+  field_type: multi_string
+  name: Filter by Sender
+  description: Only show emails from specific senders.
+  placeholder: email@domain.com
+  optional: true
+  help_text: |
+    Supports flexible matching:<br /><br />
+    <strong>Examples:</strong><br />
+    • <code>boss@company.com</code> - Specific person<br />
+    • <code>@company.com</code> - Everyone at company.com domain<br />
+    • <code>support</code> - Matches any address containing "support"<br />
+    • <code>@gmail.com</code> - All Gmail senders<br /><br />
+    <em>Leave empty to show emails from all senders.</em>
+- keyname: read_subject_regular
+  field_type: select
+  name: Display Read Emails as Regular Text
+  description: Show read emails with regular text weight.
+  default: 'yes'
+  optional: true
+  options:
+  - Yes - Regular text: 'yes'
+  - No - Keep bold: 'no'
+  help_text: |
+    <strong>Visual distinction between read and unread emails:</strong><br /><br />
+    • <strong>Read emails:</strong> Regular text weight<br />
+    • <strong>Unread emails:</strong> Bold text weight<br /><br />
+    Makes it easier to spot new messages at a glance.
+- keyname: show_sender_email
+  field_type: select
+  name: Show Email Address Instead of Name
+  description: Choose what to display for each sender.
+  default: 'no'
+  optional: true
+  options:
+  - Yes - Show address: 'yes'
+  - No - Show name: 'no'
+  help_text: |
+    <strong>Use email addresses when:</strong><br />
+    • Sender names aren't helpful or are missing<br />
+    • You need to see the exact email address<br />
+    • Working with automated or system emails
+- keyname: group_by_date
+  field_type: select
+  name: Group Emails by Date
+  description: Organize emails under date headers.
+  default: 'yes'
+  optional: true
+  options:
+  - No - Dates inline: 'no'
+  - Yes - Group with headers: 'yes'
+  help_text: |
+    <strong>Grouped view:</strong><br />
+    • Today<br />
+    &nbsp;&nbsp;10:30 AM · sender@example.com<br />
+    &nbsp;&nbsp;11:45 AM · other@example.com<br />
+    • Yesterday<br />
+    &nbsp;&nbsp;2:15 PM · another@example.com<br /><br />
+    <strong>Ungrouped view:</strong><br />
+    • 10:30 AM · sender@example.com<br />
+    • Dec 17 · other@example.com<br /><br />
+    <em>When grouped, all emails show time only (date is in the header).</em>
+- keyname: time_format
+  field_type: select
+  name: Time Format
+  description: How to display message times.
+  default: 24h
+  optional: true
+  options:
+  - 24-hour (14:30): 24h
+  - 12-hour with AM/PM (2:30 PM): 12h
+  help_text: 'Choose based on your preference and regional conventions.
+
+    '
+- keyname: date_format
+  field_type: select
+  name: Date Format
+  description: How to display dates for emails.
+  default: short
+  optional: true
+  options:
+  - Short (Dec 18): short
+  - Medium (Dec 18, 2024): medium
+  - Long (December 18, 2024): long
+  - Numeric (12/18/24): numeric
+  - ISO Date (2024-12-18): iso
+  help_text: Choose based on your display size and personal preference.
+name: Gmail Messages (OAuth)
+refresh_interval: 1440
