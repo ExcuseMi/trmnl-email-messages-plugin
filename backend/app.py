@@ -1,6 +1,6 @@
 """
 Async IMAP Email Reader - Flask Backend for TRMNL
-Optimized version with minimal duplication and maximum performance
+Optimized version with resilient error handling and cache-first strategy
 """
 
 from flask import Flask, request, jsonify
@@ -83,6 +83,27 @@ LOCALHOST_IPS = ['127.0.0.1', '::1']
 
 # Redis cache client (initialized on first use)
 redis_client = None
+
+
+# Custom exception classes for better error classification
+class IMAPAuthenticationError(Exception):
+    """Raised when IMAP authentication fails"""
+    pass
+
+
+class IMAPConnectionError(Exception):
+    """Raised when IMAP connection fails"""
+    pass
+
+
+class IMAPProtocolError(Exception):
+    """Raised when IMAP protocol encounters an error"""
+    pass
+
+
+class IMAPTimeoutError(Exception):
+    """Raised when IMAP operation times out"""
+    pass
 
 
 def mask_email(email_addr):
@@ -482,40 +503,93 @@ def parse_message_data(header_data, msg_id, is_read=True, is_flagged=False):
     }
 
 
+async def cleanup_imap_connection(client, request_id=None):
+    """Safely cleanup IMAP connection with proper timeout handling"""
+    if not client:
+        return
+
+    req_prefix = f"[{request_id}]" if request_id else ""
+
+    try:
+        # Try to close gracefully with timeout
+        await asyncio.wait_for(client.close(), timeout=2.0)
+    except asyncio.TimeoutError:
+        logger.debug(f"{req_prefix} ⚠️  IMAP close timed out")
+    except Exception as e:
+        logger.debug(f"{req_prefix} ⚠️  IMAP close error: {e}")
+
+    try:
+        # Try to logout with timeout
+        await asyncio.wait_for(client.logout(), timeout=2.0)
+    except asyncio.TimeoutError:
+        logger.debug(f"{req_prefix} ⚠️  IMAP logout timed out")
+    except Exception as e:
+        logger.debug(f"{req_prefix} ⚠️  IMAP logout error: {e}")
+
+
 async def fetch_email_messages(server, port, username, password, folder, limit, unread_only, gmail_category=None, from_emails=None, flagged_only=False, request_id=None):
     """
-    Optimized async IMAP fetch with combined batch fetching
+    Optimized async IMAP fetch with improved error handling and connection management
     """
     client = None
     req_prefix = f"[{request_id}]" if request_id else ""
+    authenticated = False  # Track if we successfully authenticated
 
     try:
         start_time = time.time()
 
+        # Create SSL context with better compatibility
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False  # More compatible with various servers
+        ssl_context.verify_mode = ssl.CERT_REQUIRED
+
         # Create async IMAP client
-        client = aioimaplib.IMAP4_SSL(host=server, port=port, timeout=IMAP_CONNECT_TIMEOUT)
+        client = aioimaplib.IMAP4_SSL(
+            host=server,
+            port=port,
+            timeout=IMAP_CONNECT_TIMEOUT,
+            ssl_context=ssl_context
+        )
 
         # Wait for server hello
         try:
             await asyncio.wait_for(client.wait_hello_from_server(), timeout=IMAP_CONNECT_TIMEOUT)
         except asyncio.TimeoutError:
-            raise Exception(f'Connection timeout to {server}:{port}')
+            raise IMAPConnectionError(f'Connection timeout to {server}:{port}')
 
-        # Login
+        # Login - use specific exception types
         try:
             login_response = await asyncio.wait_for(
                 client.login(username, password),
                 timeout=IMAP_LOGIN_TIMEOUT
             )
             if login_response.result != 'OK':
-                raise Exception(f'Login failed: {login_response.lines}')
+                raise IMAPAuthenticationError('Invalid credentials')
+
+            authenticated = True  # Mark as successfully authenticated
+
         except asyncio.TimeoutError:
-            raise Exception(f'Login timeout')
+            raise IMAPTimeoutError(f'Login operation timed out after {IMAP_LOGIN_TIMEOUT}s')
+        except IMAPAuthenticationError:
+            raise  # Re-raise auth errors as-is
+        except Exception as e:
+            # Classify other login exceptions
+            error_str = str(e).lower()
+            if any(keyword in error_str for keyword in ['authentication', 'credentials', 'password', 'authenticationfailed']):
+                raise IMAPAuthenticationError(str(e))
+            else:
+                raise IMAPConnectionError(f'Login failed: {str(e)}')
 
         # Select folder
-        select_response = await client.select(folder)
-        if select_response.result != 'OK':
-            raise Exception(f'Failed to select folder {folder}')
+        try:
+            select_response = await asyncio.wait_for(
+                client.select(folder),
+                timeout=10
+            )
+            if select_response.result != 'OK':
+                raise IMAPProtocolError(f'Failed to select folder {folder}')
+        except asyncio.TimeoutError:
+            raise IMAPTimeoutError(f'Folder selection timed out')
 
         # Build search criteria
         search_parts = []
@@ -555,10 +629,17 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
 
             search_criteria = ' '.join(search_parts)
 
-        search_response = await client.search(search_criteria)
+        # Search with timeout
+        try:
+            search_response = await asyncio.wait_for(
+                client.search(search_criteria),
+                timeout=15
+            )
 
-        if search_response.result != 'OK':
-            raise Exception(f'Search failed')
+            if search_response.result != 'OK':
+                raise IMAPProtocolError('Search failed')
+        except asyncio.TimeoutError:
+            raise IMAPTimeoutError('Search operation timed out')
 
         # Get message IDs
         if not search_response.lines:
@@ -575,16 +656,22 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
         message_ids.reverse()
         message_ids = message_ids[:limit]
 
-        # Single batch fetch for FLAGS + HEADERS
+        # Single batch fetch for FLAGS + HEADERS with extended timeout
         msg_id_str = ','.join(message_ids)
 
-        fetch_response = await client.fetch(
-            msg_id_str,
-            '(FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])'
-        )
+        try:
+            fetch_response = await asyncio.wait_for(
+                client.fetch(
+                    msg_id_str,
+                    '(FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])'
+                ),
+                timeout=IMAP_FETCH_TIMEOUT
+            )
 
-        if fetch_response.result != 'OK':
-            raise Exception(f'Fetch failed')
+            if fetch_response.result != 'OK':
+                raise IMAPProtocolError('Fetch failed')
+        except asyncio.TimeoutError:
+            raise IMAPTimeoutError(f'Fetch operation timed out after {IMAP_FETCH_TIMEOUT}s')
 
         # Parse combined response
         messages = []
@@ -651,8 +738,7 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
         elapsed = time.time() - start_time
         logger.info(f"{req_prefix} ✓ Fetched {len(messages)} messages in {elapsed:.2f}s")
 
-        # Sort by timestamp, newest first (parse ISO format with timezone)
-        from datetime import datetime
+        # Sort by timestamp, newest first
         messages.sort(
             key=lambda x: datetime.fromisoformat(x['timestamp']),
             reverse=True
@@ -660,25 +746,53 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
 
         return messages
 
+    except IMAPAuthenticationError as e:
+        # Authentication errors - these are genuine credential issues
+        logger.error(f"{req_prefix} ✗ Auth failed: {e}")
+        raise
+
+    except IMAPTimeoutError as e:
+        # Timeout errors - could be network or server issues
+        logger.error(f"{req_prefix} ✗ Timeout: {e}")
+        raise
+
+    except IMAPConnectionError as e:
+        # Connection errors - network or server unreachable
+        logger.error(f"{req_prefix} ✗ Connection error: {e}")
+        raise
+
     except aioimaplib.aioimaplib.Abort as e:
+        # IMAP protocol state errors - these happen AFTER successful auth
         logger.error(f"{req_prefix} ✗ IMAP protocol error: {e}")
-        raise Exception(f"IMAP protocol error")
-    except aioimaplib.AioImapException as e:
-        logger.error(f"{req_prefix} ✗ IMAP error: {e}")
-        raise Exception(f"IMAP error: {str(e)}")
+        if authenticated:
+            # If we authenticated successfully, this is a protocol issue, not auth
+            raise IMAPProtocolError(f"IMAP protocol state error: {str(e)}")
+        else:
+            # If we never authenticated, could be auth-related
+            raise IMAPAuthenticationError(f"IMAP protocol error during authentication: {str(e)}")
+
     except asyncio.TimeoutError:
-        logger.error(f"{req_prefix} ✗ Timeout")
-        raise Exception("Connection timed out")
+        # Generic timeout
+        logger.error(f"{req_prefix} ✗ Operation timed out")
+        raise IMAPTimeoutError("Operation timed out")
+
     except Exception as e:
-        logger.error(f"{req_prefix} ✗ Error: {e}")
-        raise Exception(f"Error: {str(e)}")
+        # Generic errors
+        logger.error(f"{req_prefix} ✗ Unexpected error: {e}")
+        # Classify based on error message if possible
+        error_str = str(e).lower()
+        if any(keyword in error_str for keyword in ['authentication', 'credentials', 'password', 'authenticationfailed']):
+            raise IMAPAuthenticationError(str(e))
+        elif any(keyword in error_str for keyword in ['timeout', 'timed out']):
+            raise IMAPTimeoutError(str(e))
+        elif any(keyword in error_str for keyword in ['connection', 'unreachable', 'refused']):
+            raise IMAPConnectionError(str(e))
+        else:
+            raise IMAPProtocolError(f"Error: {str(e)}")
+
     finally:
-        if client:
-            try:
-                await client.close()
-                await client.logout()
-            except:
-                pass
+        # Always cleanup connection
+        await cleanup_imap_connection(client, request_id)
 
 
 def get_request_params():
@@ -707,7 +821,7 @@ def get_request_params():
             'error': f'Message limit too high. Maximum allowed: {MAX_MESSAGES_LIMIT}',
             'requested': limit,
             'maximum': MAX_MESSAGES_LIMIT
-        }, 400
+        }, 200
 
     gmail_category = data.get('gmail_category')
 
@@ -750,7 +864,12 @@ def register_routes(app):
     @app.route('/messages', methods=['GET', 'POST'])
     @require_whitelisted_ip
     async def get_messages():
-        """Get latest email messages via IMAP with cache fallback"""
+        """
+        Get latest email messages via IMAP with resilient cache fallback
+
+        ALWAYS returns 200 when cached data is available, regardless of error type.
+        This ensures TRMNL devices continue to display data even during transient failures.
+        """
         request_id = str(uuid.uuid4())[:8]
         client_ip = get_client_ip()
 
@@ -788,7 +907,7 @@ def register_routes(app):
             if mock_response:
                 return jsonify(mock_response)
             else:
-                return jsonify({'error': 'Failed to load mock data'}), 500
+                return jsonify({'error': 'Failed to load mock data'}), 200
 
         # Check cache first
         cache_key = generate_cache_key(params)
@@ -797,6 +916,7 @@ def register_routes(app):
             logger.info(f"[{request_id}] 💾 Cache HIT")
             return jsonify(cached_response)
 
+        # Try to fetch fresh data
         try:
             messages = await fetch_email_messages(
                 params['server'],
@@ -834,52 +954,102 @@ def register_routes(app):
 
             return jsonify(response_data)
 
-        except Exception as e:
+        except IMAPAuthenticationError as e:
+            # Authentication failure - check for cached data first
             error_msg = str(e)
-
-            # Detect authentication errors
-            is_auth_error = any(x in error_msg.lower() for x in [
-                'authentication', 'login', 'credentials', 'password',
-                'authenticationfailed', 'invalid credentials'
-            ])
-
-            # Try to return cached data on failure
             cached_fallback = get_cached_response(cache_key)
 
             if cached_fallback:
-                logger.warning(f"[{request_id}] ⚠️  Fetch failed, returning stale cache")
+                # ALWAYS return 200 with cached data, even for auth errors
+                logger.warning(f"[{request_id}] 🔒 Auth failed, returning stale cache (200 OK)")
 
-                # Add error information to cached response
                 cached_fallback['success'] = False
                 cached_fallback['cached'] = True
-                cached_fallback['cache_warning'] = 'Live fetch failed - returning cached data'
+                cached_fallback['cache_warning'] = 'Authentication failed - returning cached data'
                 cached_fallback['error'] = {
-                    'message': error_msg,
-                    'type': 'AUTH_FAILED' if is_auth_error else 'CONNECTION_ERROR',
+                    'message': format_auth_error(params['username'], error_msg),
+                    'type': 'AUTH_FAILED',
                     'occurred_at': datetime.now().isoformat()
                 }
 
-                # Return cached data with warning status (200 OK but with error info)
+                return jsonify(cached_fallback), 200  # 200 OK with error info
+
+            # No cache available - return error details
+            friendly_error = format_auth_error(params['username'], error_msg)
+            logger.warning(f"[{request_id}] 🔒 Auth failed for {masked_username} (no cache)")
+
+            return jsonify({
+                'success': False,
+                'error': 'Authentication Failed',
+                'message': friendly_error,
+                'code': 'AUTH_FAILED',
+                'email': params['username']
+            }), 200
+
+        except (IMAPTimeoutError, IMAPConnectionError, IMAPProtocolError) as e:
+            # Network/protocol errors - try cached data first
+            error_msg = str(e)
+            error_type = type(e).__name__
+
+            cached_fallback = get_cached_response(cache_key)
+
+            if cached_fallback:
+                # ALWAYS return 200 with cached data for non-auth errors
+                logger.warning(f"[{request_id}] ⚠️  {error_type}, returning stale cache (200 OK)")
+
+                cached_fallback['success'] = False
+                cached_fallback['cached'] = True
+                cached_fallback['cache_warning'] = f'{error_type} - returning cached data'
+                cached_fallback['error'] = {
+                    'message': error_msg,
+                    'type': error_type.replace('IMAP', '').replace('Error', '').upper(),
+                    'occurred_at': datetime.now().isoformat()
+                }
+
+                return jsonify(cached_fallback), 200  # 200 OK with error info
+
+            # No cache available - return appropriate error
+            logger.error(f"[{request_id}] ✗ {error_type}: {error_msg} (no cache)")
+
+            # Map to appropriate HTTP status
+            if isinstance(e, IMAPTimeoutError):
+                status = 200  # Gateway Timeout
+            else:
+                status = 200  # Service Unavailable
+
+            return jsonify({
+                'success': False,
+                'error': error_type.replace('IMAP', '').replace('Error', ''),
+                'message': error_msg,
+                'code': error_type.replace('IMAP', '').replace('Error', '').upper()
+            }), status
+
+        except Exception as e:
+            # Unexpected errors - still try cache
+            error_msg = str(e)
+            cached_fallback = get_cached_response(cache_key)
+
+            if cached_fallback:
+                logger.warning(f"[{request_id}] ⚠️  Unexpected error, returning stale cache (200 OK)")
+
+                cached_fallback['success'] = False
+                cached_fallback['cached'] = True
+                cached_fallback['cache_warning'] = 'Unexpected error - returning cached data'
+                cached_fallback['error'] = {
+                    'message': error_msg,
+                    'type': 'UNEXPECTED_ERROR',
+                    'occurred_at': datetime.now().isoformat()
+                }
+
                 return jsonify(cached_fallback), 200
 
-            # No cache available - return error
-            if is_auth_error:
-                friendly_error = format_auth_error(params['username'], error_msg)
-                logger.warning(f"[{request_id}] 🔒 Auth failed for {masked_username}")
-                return jsonify({
-                    'success': False,
-                    'error': 'Authentication Failed',
-                    'message': friendly_error,
-                    'code': 'AUTH_FAILED'
-                }), 401
-            else:
-                logger.error(f"[{request_id}] ✗ {error_msg}")
-                return jsonify({
-                    'success': False,
-                    'error': 'Connection Error',
-                    'message': error_msg,
-                    'code': 'CONNECTION_ERROR'
-                }), 500
+            logger.error(f"[{request_id}] ✗ Unexpected error: {error_msg} (no cache)")
+            return jsonify({
+                'success': False,
+                'error': 'Unexpected Error',
+                'message': error_msg,
+                'code': 'UNEXPECTED_ERROR'
+            }), 200
 
     @app.route('/health')
     def health():
@@ -922,9 +1092,10 @@ def register_routes(app):
 app = create_app()
 
 logger.info("=" * 60)
-logger.info("🚀 IMAP Email Reader")
+logger.info("🚀 IMAP Email Reader (Resilient Edition)")
 logger.info(f"   Python {sys.version.split()[0]}")
 logger.info(f"   Log Level: {LOG_LEVEL}")
+logger.info(f"   Cache Strategy: Always return 200 with cached data on errors")
 logger.info("=" * 60)
 
 
