@@ -495,7 +495,8 @@ def register_routes(app):
                 'code': 'UNEXPECTED_ERROR'
             }), 200
 
-    @app.route('/gmail/messages', methods=['GET', 'POST'])    @require_whitelisted_ip
+    @app.route('/gmail/messages', methods=['GET', 'POST'])
+    @require_whitelisted_ip
     async def get_gmail_messages():
         """
         Gmail REST API endpoint - OAuth only
