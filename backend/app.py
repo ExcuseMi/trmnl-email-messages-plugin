@@ -586,15 +586,29 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
                 # OAuth2 authentication using XOAUTH2
                 auth_string = generate_oauth2_string(username, oauth_token)
 
-                # aioimaplib XOAUTH2 authentication
-                # Use the authenticate method with a callback
-                login_response = await asyncio.wait_for(
-                    client.authenticate('XOAUTH2', lambda x: auth_string),
+                # For Gmail XOAUTH2: send as single-line AUTHENTICATE command
+                # Format: AUTHENTICATE XOAUTH2 <base64_auth_string>
+                tag = client.protocol.new_tag().decode()
+                auth_command = f'{tag} AUTHENTICATE XOAUTH2 {auth_string}\r\n'
+
+                # Send the command
+                client.protocol.transport.write(auth_command.encode())
+
+                # Wait for server response
+                response = await asyncio.wait_for(
+                    client.protocol.wait_server_push(),
                     timeout=IMAP_LOGIN_TIMEOUT
                 )
 
-                if login_response.result != 'OK':
-                    raise IMAPAuthenticationError('OAuth authentication failed')
+                # Check if authentication succeeded
+                if not any(tag.encode() + b' OK' in line for line in response.lines):
+                    # Try to get error details
+                    error_msg = 'OAuth authentication failed'
+                    for line in response.lines:
+                        if b'NO' in line or b'BAD' in line:
+                            error_msg = line.decode('utf-8', errors='ignore')
+                            break
+                    raise IMAPAuthenticationError(error_msg)
 
                 logger.debug(f"{req_prefix} ✓ OAuth authentication successful")
 
@@ -616,11 +630,11 @@ async def fetch_email_messages(server, port, username, password, folder, limit, 
         except Exception as e:
             # Classify other login exceptions
             error_str = str(e).lower()
-            if any(keyword in error_str for keyword in ['authentication', 'credentials', 'password', 'authenticationfailed']):
+            if any(keyword in error_str for keyword in
+                   ['authentication', 'credentials', 'password', 'authenticationfailed']):
                 raise IMAPAuthenticationError(str(e))
             else:
                 raise IMAPConnectionError(f'Login failed: {str(e)}')
-
         # Select folder
         try:
             select_response = await asyncio.wait_for(
