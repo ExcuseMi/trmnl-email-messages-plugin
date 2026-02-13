@@ -85,7 +85,7 @@ MIT License - See LICENSE file for details
 <!-- PLUGIN_STATS_START -->
 ## 🚀 TRMNL Plugins
 
-*Last updated: 2026-02-12 06:57:12 UTC*
+*Last updated: 2026-02-13 06:54:48 UTC*
 
 
 ## <img src="assets/plugin-images/198482_icon.svg" alt="Email Messages (IMAP) icon" width="32"/> [Email Messages (IMAP)](https://trmnl.com/recipes/198482)
@@ -106,7 +106,7 @@ This plugin connects to your email account via IMAP and shows your latest messag
 | Metric | Value |
 |--------|-------|
 | Installs | 1 |
-| Forks | 22 |
+| Forks | 23 |
 
 ---
 
