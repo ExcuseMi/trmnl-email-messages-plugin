@@ -85,10 +85,12 @@ MIT License - See LICENSE file for details
 <!-- PLUGIN_STATS_START -->
 ## 🚀 TRMNL Plugins
 
-*Last updated: 2026-02-17 06:54:02 UTC*
+*Last updated: 2026-02-17 10:36:39 UTC*
 
 
-## <img src="assets/plugin-images/198482_icon.svg" alt="Email Messages (IMAP) icon" width="32"/> [Email Messages (IMAP)](https://trmnl.com/recipes/198482)
+## <img src="assets/plugin-images/198482_icon.png" alt="Email Messages (IMAP) icon" width="32"/> [Email Messages (IMAP)](https://usetrmnl.com/recipes/198482)
+
+![Installs](https://trmnl-badges.gohk.xyz/badge/installs?recipe=198482) ![Forks](https://trmnl-badges.gohk.xyz/badge/forks?recipe=198482)
 
 ![Email Messages (IMAP) screenshot](assets/plugin-images/198482_screenshot.png)
 
@@ -101,13 +103,6 @@ This plugin connects to your email account via IMAP and shows your latest messag
 <strong>Custom display:</strong> Control how emails appear on your screen
 
 
-### 📊 Statistics
-
-| Metric | Value |
-|--------|-------|
-| Installs | 1 |
-| Forks | 23 |
-
 ---
 
 
@@ -117,7 +112,7 @@ This plugin connects to your email account via IMAP and shows your latest messag
 
 This plugin is configured but either hasn't been published to the TRMNL marketplace yet or the API is temporarily unavailable.
 
-**Plugin URL**: https://trmnl.com/recipes/238783
+**Plugin URL**: https://usetrmnl.com/recipes/238783
 
 ---
 
