@@ -85,14 +85,14 @@ MIT License - See LICENSE file for details
 <!-- PLUGIN_STATS_START -->
 ## 🚀 TRMNL Plugins
 
-*Last updated: 2026-05-07 08:27:46 UTC*
+*Last updated: 2026-05-08 07:23:44 UTC*
 
 
 ## <img src="assets/plugin-images/198482_icon.png" alt="Email Messages (IMAP) icon" width="32"/> [Email Messages (IMAP)](https://usetrmnl.com/recipes/198482)
 
 ![Installs](https://trmnl-badges.gohk.xyz/badge/installs?recipe=198482) ![Forks](https://trmnl-badges.gohk.xyz/badge/forks?recipe=198482)
 
-![Email Messages (IMAP) screenshot](assets/plugin-images/198482_screenshot.bmp)
+![Email Messages (IMAP) screenshot](assets/plugin-images/198482_screenshot.png)
 
 ### Description
 Display your recent emails on your TRMNL display.<br /><br />
