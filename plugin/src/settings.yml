@@ -1,13 +1,15 @@
 ---
-strategy: polling
+strategy: async_polling
 no_screen_padding: 'no'
 dark_mode: 'no'
 static_data: ''
 polling_verb: post
-polling_url: https://trmnl.bettens.dev/email/messages
+framework_version: 3.1.1
+serverless_language: node
+polling_url: https://trmnl.bettens.dev/email/async/messages
 polling_headers: content-type=application/json
 polling_body: "{\r\n  {% if provider == \"gmail\" %}\r\n  \"server\": \"imap.gmail.com\",\r\n  \"port\": 993,\r\n  \"password\": {{ gmail_password | json }}\r\n  {% elsif provider == \"outlook\" %}\r\n  \"server\": \"outlook.office365.com\",\r\n  \"port\": 993,\r\n  \"password\": {{ outlook_password | json }}\r\n  {% elsif provider == \"yahoo\" %}\r\n  \"server\": \"imap.mail.yahoo.com\",\r\n  \"port\": 993,\r\n  \"password\": {{ yahoo_password | json }}\r\n  {% elsif provider == \"icloud\" %}\r\n  \"server\": \"imap.mail.me.com\",\r\n  \"port\": 993,\r\n  \"password\": {{ icloud_password | json }}\r\n  {% elsif provider == \"custom\" %}\r\n  \"server\": {{ custom_server | json }},\r\n  \"port\": {{ custom_port | default: 993 | plus: 0 }},\r\n  \"password\": {{ custom_password | json }}\r\n  {% endif %},\r\n\r\n  \"username\": {{ email | json }},\r\n  \"folder\": {{ folder | default: \"INBOX\" | json }},\r\n  \"limit\": {{ limit | default: 10 | plus: 0 }},\r\n  \"unread_only\": {% if unread_only == \"yes\" %}true{% else %}false{% endif %},\r\n  \"flagged_only\": {% if flagged_only == \"yes\" %}true{% else %}false{% endif %}\r\n\r\n  {% if provider == \"gmail\" and gmail_category and gmail_category != \"\" %},\r\n  \"gmail_category\": {{ gmail_category | json }}\r\n  {% endif %}\r\n\r\n  {% if from_emails and from_emails != \"\" %},\r\n  \"from_emails\": {{ from_emails | json }}\r\n  {% endif %}\r\n}"
-id: 198482
+id: 302822
 custom_fields:
 - keyname: author_bio
   field_type: author_bio
@@ -342,4 +344,4 @@ custom_fields:
   - ISO Date (2024-12-18): iso
   help_text: Choose based on your display size and personal preference.
 name: Email Messages (IMAP)
-refresh_interval: 1440
+refresh_interval: 15

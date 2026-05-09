@@ -189,7 +189,7 @@
   {% endif %}
 </div>
 <div class="title_bar">
-  {% render "email_provider_logo": email_provider: "gmail" %}
+  {% render "email_provider_logo": email_provider: trmnl.plugin_settings.custom_fields_values.provider %}
   <span class="title text-stroke">{{ data.email | default: trmnl.plugin_settings.custom_fields_values.email }}</span>
   {% assign show_instance = show_instance | default: "yes" %}
   {% if show_instance == "yes" %}
@@ -212,5 +212,4 @@
   {% endif %}
 </div>
 
-<script />
   {% endtemplate %}
