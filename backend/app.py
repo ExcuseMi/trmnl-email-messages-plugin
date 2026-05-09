@@ -436,6 +436,7 @@ def register_routes(app):
 
         safe_params = {k: ('***' if k in ('password', 'oauth_access_token') else v) for k, v in params.items()}
         logger.debug(f"[{request_id}] ← Incoming async request: {safe_params}")
+        logger.debug(f"[{request_id}] ← Headers: {dict(request.headers)}")
 
         server = params.get('server')
         username = params.get('username')
