@@ -195,6 +195,11 @@
   </div>
   {% endif %}
 </div>
+{% render "title_bar": data:data, trmnl:trmnl, show_instance:show_instance %}
+
+  {% endtemplate %}
+
+{% template title_bar %}
 <div class="title_bar">
   {% render "email_provider_logo": email_provider: trmnl.plugin_settings.custom_fields_values.provider %}
   <span class="title text-stroke">{{ data.email | default: trmnl.plugin_settings.custom_fields_values.email | escape }}</span>
@@ -218,5 +223,63 @@
   </span>
   {% endif %}
 </div>
+{% endtemplate %}
 
-  {% endtemplate %}
+{% template latest_message %}
+{% assign m = data.message %}
+<div class="layout layout--col layout--top layout--left gap">
+  {% if data.error %}
+  <div class="flex flex--col flex--center text-center px--4 w--full h--full">
+    <span class="label label--large label--error mb--2">{{ data.error | escape }}</span>
+    {% if data.message %}<div class="description">{{ data.message | escape }}</div>{% endif %}
+  </div>
+  {% elsif m == nil %}
+  <div class="flex flex--col flex--center text-center w--full h--full">
+    <span class="title">{% if data.unread_only %}No unread mail{% else %}No mail{% endif %}</span>
+  </div>
+  {% else %}
+  {% assign time_format = trmnl.plugin_settings.custom_fields_values.time_format | default: "24h" %}
+  {% assign offset_seconds = trmnl.user.utc_offset | default: 0 %}
+  {% assign epoch = m.timestamp | date: "%s" | plus: offset_seconds %}
+  {% assign now_day = "now" | date: "%s" | plus: offset_seconds | date: "%Y-%m-%d" %}
+  {% assign clock = "%H:%M" %}{% if time_format == "12h" %}{% assign clock = "%-I:%M %p" %}{% endif %}
+  {% assign when = epoch | date: clock %}
+  {% assign day = epoch | date: "%Y-%m-%d" %}
+  {% if day != now_day %}{% assign when = epoch | date: "%b %-d" | append: " " | append: when %}{% endif %}
+  {% assign sender_name = m.sender | default: m.sender_email %}
+  {% assign initial = sender_name | slice: 0 | upcase %}
+    {% comment %} One richtext column: the content limiter subtracts the siblings before .content inside it {% endcomment %}
+    <div class="richtext richtext--left gap w--full h--full">
+    <div class="flex flex--row flex--center-y gap w--full">
+      <span class="label label--xlarge label--filled shrink-0">{{ initial | escape }}</span>
+      <div class="flex flex--col flex--left grow">
+        <span class="title title--small" data-clamp="1">{{ sender_name | escape }}</span>
+        {% if m.sender_email != blank and m.sender_email != sender_name %}
+        <span class="label label--small label--gray" data-clamp="1">{{ m.sender_email | escape }}</span>
+        {% endif %}
+      </div>
+      <div class="flex flex--col flex--right gap--small shrink-0">
+        <span class="label label--small">{{ when }}</span>
+        <div class="flex flex--row flex--right gap--small">
+          {% if m.flagged %}<span class="label label--small label--warning">Flagged</span>{% endif %}
+          {% unless m.read %}<span class="label label--small label--outline">Unread</span>{% endunless %}
+          {% if m.has_attachments %}<span class="label label--small label--outline">Attachment</span>{% endif %}
+        </div>
+      </div>
+    </div>
+    <span class="title text--left w--full" data-clamp="{{ title_lines | default: 2 }}">{{ m.subject | escape }}</span>
+    <div class="divider"></div>
+    {% if m.encrypted %}
+    <span class="description">This message is encrypted and can't be shown.</span>
+    {% elsif m.paragraphs == empty or m.paragraphs == nil %}
+    <span class="description label--gray">No text in this message.</span>
+    {% else %}
+      {% comment %} The content limiter fills the space: smaller font first, then it cuts the paragraph that overflows {% endcomment %}
+      <div class="content content--base content--left gap text--left w--full" data-content-limiter="true">
+        {% for paragraph in m.paragraphs %}<p>{{ paragraph | escape | newline_to_br }}</p>{% endfor %}
+      </div>
+    {% endif %}
+    </div>
+  {% endif %}
+</div>
+{% endtemplate %}

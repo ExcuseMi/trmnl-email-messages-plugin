@@ -1,0 +1,63 @@
+# The 'Latest message' display. Run: trmnlp test (from plugin/)
+LATEST_NOW = '2030-01-02T12:00:00Z'.freeze
+LATEST_FIELDS = { provider: 'gmail', email: 'me@example.com', display: 'latest' }.freeze
+LATEST_BODY = "Hi all,\n\nThe Halloween party is on Friday at 8. Bring something to eat; we have drinks and music.\n\n" \
+       "Costumes are welcome but not required. Parking is behind the house.\n\nSee you there!\nJürgen".freeze
+LATEST_MESSAGE = { sender: 'Jürgen', sender_email: 'j@example.com', subject: 'Halloween party on Friday 🎃',
+            timestamp: '2030-01-02T09:15:00+00:00', read: false, flagged: true, body: LATEST_BODY,
+            truncated: false, has_attachments: true, encrypted: false,
+            paragraphs: LATEST_BODY.split("\n\n") }.freeze
+
+def latest_data(message = LATEST_MESSAGE)
+  { data: { success: true, display: 'latest', email: 'me@example.com', folder: 'INBOX', message: } }
+end
+
+def render_latest(view, data)
+  trmnl.render(view:, now: LATEST_NOW, data:, transform: false, custom_fields: LATEST_FIELDS)
+end
+
+RSpec.describe 'Latest message display' do
+  %w[full half_horizontal half_vertical quadrant].each do |view|
+    it "shows the message in #{view}" do
+      screen = render_latest(view, latest_data)
+      expect(screen).to have_text('Halloween party on Friday')
+      expect(screen).to have_no_problems
+      expect(screen).to have_no_overflow
+      expect(screen).to match_snapshot
+    end
+
+    it "cuts a very long body neatly in #{view}" do
+      text = (['A long paragraph that keeps going and going, the way a newsletter does when it has a lot to say.'] * 40)
+      long = LATEST_MESSAGE.merge(body: text.join("\n\n"), paragraphs: text, truncated: true)
+      screen = render_latest(view, latest_data(long))
+      expect(screen).to have_no_overflow
+      expect(screen).to match_snapshot
+    end
+  end
+
+  it 'labels unread, flagged and attachments' do
+    screen = render_latest('full', latest_data)
+    expect(screen).to have_css('.label--warning')
+    expect(screen).to have_css('.label--outline', text: 'Unread')
+    expect(screen).to have_css('.label--filled', text: 'J')
+    expect(screen).to have_css('.label--outline', text: 'Attachment')
+  end
+
+  it 'says so for an encrypted message' do
+    screen = render_latest('full', latest_data(LATEST_MESSAGE.merge(body: '', encrypted: true)))
+    expect(screen).to have_text('encrypted')
+  end
+
+  it 'says so for an empty mailbox' do
+    screen = render_latest('full', { data: { success: true, display: 'latest', email: 'me@example.com', message: nil } })
+    expect(screen).to have_text('No mail')
+  end
+
+  it 'shows an error as an error label' do
+    error = { data: { success: false, code: 'AUTH_FAILED', error: 'Auth Failed', message: 'Login failed.' } }
+    screen = render_latest('full', error)
+    expect(screen).to have_css('.label--error', text: 'Auth Failed')
+    expect(screen).to have_text('Login failed.')
+    expect(screen).to have_no_problems
+  end
+end

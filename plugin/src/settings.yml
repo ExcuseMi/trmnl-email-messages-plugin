@@ -27,6 +27,15 @@ custom_fields:
     <strong>Custom display:</strong> Control how emails appear on your screen
   category: email
   github_url: https://github.com/ExcuseMi/trmnl-email-messages-plugin
+- keyname: display
+  field_type: select
+  name: Display
+  description: A list of your latest messages, or the latest message with its text.
+  options:
+  - Message list: list
+  - Latest message (with text): latest
+  default: list
+  optional: true
 - keyname: provider
   field_type: select
   name: Email Provider
@@ -273,6 +282,25 @@ custom_fields:
     • <code>support</code> - Matches any address containing "support"<br />
     • <code>@gmail.com</code> - All Gmail senders<br /><br />
     <em>Leave empty to show emails from all senders.</em>
+- keyname: hide_invitations
+  field_type: select
+  name: Hide Calendar Invitations
+  description: Leave out meeting invitations and updates (mails with a calendar .ics
+    part).
+  options:
+  - 'No': 'no'
+  - 'Yes': 'yes'
+  default: 'no'
+  optional: true
+- keyname: hide_quoted
+  field_type: select
+  name: Hide Quoted Replies
+  description: 'Only for Latest message: leave out quoted earlier messages and signatures.'
+  options:
+  - 'Yes': 'yes'
+  - 'No': 'no'
+  default: 'yes'
+  optional: true
 - keyname: read_subject_regular
   field_type: select
   name: Display Read Emails as Regular Text

@@ -165,3 +165,38 @@ def test_each_step_may_only_wait_for_the_time_left(monkeypatch):
     assert imap.connect_timeout == 4.0
     timeouts = imap.sock.timeouts[:-1]  # the last one is the short logout timeout
     assert timeouts[0] == 4.0 and all(t == 2.5 for t in timeouts[1:])
+
+
+def test_list_is_the_default_display():
+    data = run(GMAIL)['data']
+    assert data['display'] == 'list' and 'messages' in data and 'message' not in data
+
+
+INVITE = (b'From: calendar-notification@google.com\r\nSubject: Invitation: Vaccination @ Tue Oct 20\r\n'
+          b'Date: Sat, 25 Oct 2026 10:00:00 +0000\r\n\r\n')
+INVITE_LINE = (b'3 (FLAGS () BODYSTRUCTURE (("text" "plain" NIL NIL NIL "7bit" 10 1)("text" "calendar" '
+               b'("method" "REQUEST") NIL NIL "7bit" 300 5) "alternative") BODY[HEADER.FIELDS (FROM SUBJECT DATE)] {99}')
+
+
+def with_invitation(monkeypatch):
+    original = FakeImap.fetch
+
+    def fetch(self, ids, what):
+        status, data = original(self, ids, what)
+        self.commands.append(('fetch', ids, what))
+        return status, data + [(INVITE_LINE, INVITE), b')']
+    monkeypatch.setattr(FakeImap, 'fetch', fetch)
+
+
+def test_invitations_shown_by_default(monkeypatch):
+    with_invitation(monkeypatch)
+    subjects = [m['subject'] for m in run(GMAIL)['data']['messages']]
+    assert 'Invitation: Vaccination @ Tue Oct 20' in subjects
+
+
+def test_invitations_hidden_when_asked(monkeypatch):
+    with_invitation(monkeypatch)
+    data = run({**GMAIL, 'hide_invitations': 'yes', 'limit': '2'})['data']
+    assert [m['subject'] for m in data['messages']] == ['Café tonight', 'Older']
+    fetch = [c for c in FakeImap.instances[0].commands if c[0] == 'fetch'][0]
+    assert 'BODYSTRUCTURE' in fetch[2]
