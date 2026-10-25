@@ -16,12 +16,22 @@ GMAIL = {'provider': 'gmail', 'email': 'me@gmail.com', 'gmail_password': 'right'
 PREVIOUS = {'data': {'messages': [{'subject': 'old'}]}}
 
 
+class FakeSocket:
+    def __init__(self):
+        self.timeouts = []
+
+    def settimeout(self, value):
+        self.timeouts.append(value)
+
+
 class FakeImap:
     instances = []
     password = 'right'
 
     def __init__(self, host, port, ssl_context=None, timeout=None):
         self.host, self.port, self.commands = host, port, []
+        self.connect_timeout = timeout
+        self.sock = FakeSocket()
         FakeImap.instances.append(self)
 
     def login(self, user, password):
@@ -78,7 +88,9 @@ def test_wrong_password_is_shown_not_hidden():
 
 def test_connection_failure_keeps_previous_mail(monkeypatch):
     refuse_with(monkeypatch, OSError('network unreachable'))
-    assert run(GMAIL, PREVIOUS) == PREVIOUS
+    data = run(GMAIL, PREVIOUS)['data']
+    assert data['messages'] == PREVIOUS['data']['messages']
+    assert data['stale_reason'] == 'CONNECTION' and 'total_ms' in data['timing']
 
 
 def test_timeout_without_previous_explains(monkeypatch):
@@ -107,3 +119,49 @@ def test_missing_settings_explained():
 def test_limit_is_clamped():
     assert transform._settings({**GMAIL, 'limit': '500'})['limit'] == transform.MAX_MESSAGES
     assert transform._settings({**GMAIL, 'limit': '-3'})['limit'] == 1
+
+
+def test_timing_is_in_the_payload():
+    timing = run(GMAIL)['data']['timing']
+    assert list(timing['steps_ms']) == ['connect', 'login', 'select', 'search', 'fetch']
+    assert timing['total_ms'] <= timing['limit_ms'] == 4000
+
+
+def test_errors_carry_timing_too():
+    FakeImap.password = 'other'
+    data = run(GMAIL)['data']
+    assert data['code'] == 'AUTH_FAILED' and 'connect' in data['timing']['steps_ms']
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+def test_a_slow_step_stops_the_run_before_the_limit(monkeypatch):
+    clock = FakeClock()
+    monkeypatch.setattr(transform.time, 'monotonic', clock)
+
+    def slow_login(self, user, password):
+        clock.now += 4.5  # longer than the whole budget
+    monkeypatch.setattr(FakeImap, 'login', slow_login)
+    data = run(GMAIL)['data']
+    assert data['code'] == 'TIMEOUT'
+    assert ('select', '"INBOX"', True) not in FakeImap.instances[0].commands
+
+
+def test_each_step_may_only_wait_for_the_time_left(monkeypatch):
+    clock = FakeClock()
+    monkeypatch.setattr(transform.time, 'monotonic', clock)
+
+    def login(self, user, password):
+        clock.now += 1.5
+    monkeypatch.setattr(FakeImap, 'login', login)
+    run(GMAIL)
+    imap = FakeImap.instances[0]
+    assert imap.connect_timeout == 4.0
+    timeouts = imap.sock.timeouts[:-1]  # the last one is the short logout timeout
+    assert timeouts[0] == 4.0 and all(t == 2.5 for t in timeouts[1:])

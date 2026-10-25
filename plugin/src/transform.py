@@ -19,7 +19,7 @@ SERVERS = {
     'icloud': ('imap.mail.me.com', 993, 'icloud_password'),
 }
 MAX_MESSAGES = 50
-DEADLINE_SECONDS = 4.0  # TRMNL stops a run after 5 s
+DEADLINE_SECONDS = 4.0  # TRMNL stops a run after 5 s; the rest is margin for parsing and the return
 KEEP_PREVIOUS = {'TIMEOUT', 'CONNECTION', 'PROTOCOL', 'UNEXPECTED_ERROR'}
 UNSAFE_CHARS = set('"\\\r\n\0')
 
@@ -119,40 +119,72 @@ def parse_message(msg_id, flags, header_bytes):
     }
 
 
-def fetch_messages(s):
-    started = time.monotonic()
+class Timer:
+    """Guards TRMNL's 5 s limit: every step gets only the time that is left, and each step is timed"""
 
-    def left():
-        remaining = DEADLINE_SECONDS - (time.monotonic() - started)
+    def __init__(self, deadline=DEADLINE_SECONDS):
+        self.deadline = deadline
+        self.started = self.mark = time.monotonic()
+        self.steps = {}
+
+    def left(self):
+        remaining = self.deadline - (time.monotonic() - self.started)
         if remaining <= 0:
             raise MailError('TIMEOUT', 'The mail server took too long to answer.')
         return remaining
 
+    def step(self, name):
+        now = time.monotonic()
+        self.steps[name] = round((now - self.mark) * 1000)
+        self.mark = now
+
+    def report(self):
+        return {'steps_ms': dict(self.steps), 'total_ms': round((time.monotonic() - self.started) * 1000),
+                'limit_ms': round(self.deadline * 1000)}
+
+
+def fetch_messages(s, timer):
     try:
-        client = imaplib.IMAP4_SSL(s['server'], s['port'], ssl_context=ssl.create_default_context(), timeout=left())
+        client = imaplib.IMAP4_SSL(s['server'], s['port'], ssl_context=ssl.create_default_context(),
+                                   timeout=timer.left())
     except (socket.timeout, TimeoutError):
         raise MailError('TIMEOUT', 'The mail server took too long to answer.')
     except (OSError, ssl.SSLError):
         raise MailError('CONNECTION', 'Could not connect to the mail server. Check the server name and port.')
+    timer.step('connect')
+
+    def guard():
+        # The socket may wait only for the time that is left of the whole run
+        if getattr(client, 'sock', None) is not None:
+            client.sock.settimeout(timer.left())
+        else:
+            timer.left()
+
     try:
+        guard()
         try:
             client.login(s['username'], s['password'])
         except imaplib.IMAP4.error:
             raise MailError('AUTH_FAILED', 'Login failed. Use an app password, not your normal password.')
-        left()
+        timer.step('login')
+        guard()
         status, _ = client.select(f'"{s["folder"]}"', readonly=True)
         if status != 'OK':
             raise MailError('PROTOCOL', f'Failed to select folder {s["folder"]}')
+        timer.step('select')
+        guard()
         status, data = client.search(None, search_criteria(s))
         if status != 'OK':
             raise MailError('PROTOCOL', 'The mail server gave an unexpected answer.')
+        timer.step('search')
         ids = (data[0] or b'').split()[-s['limit']:]
         if not ids:
             return []
-        left()
+        guard()
         status, data = client.fetch(b','.join(ids).decode(), '(FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])')
         if status != 'OK':
             raise MailError('PROTOCOL', 'The mail server gave an unexpected answer.')
+        timer.step('fetch')
         messages = [parse_message(part[0].split(b' ', 1)[0].decode(), part[0], part[1])
                     for part in data if isinstance(part, tuple)]
         return sorted(messages, key=lambda m: m['timestamp'], reverse=True)
@@ -162,31 +194,34 @@ def fetch_messages(s):
         raise MailError('CONNECTION', 'Could not connect to the mail server. Check the server name and port.')
     finally:
         try:
+            client.sock.settimeout(0.5)
             client.logout()
         except Exception:
             pass
 
 
 def run(input):
+    timer = Timer()
     trmnl = input.get('trmnl') or {}
     previous = trmnl.get('previous_merge_variables') or {}
     values = (trmnl.get('plugin_settings') or {}).get('custom_fields_values') or {}
     try:
         s = _settings(values)
-        messages = fetch_messages(s)
+        messages = fetch_messages(s, timer)
         data = {'success': True, 'email': s['username'], 'folder': s['folder'], 'count': len(messages),
-                'unread_only': s['unread_only'], 'flagged_only': s['flagged_only'], 'messages': messages}
+                'unread_only': s['unread_only'], 'flagged_only': s['flagged_only'], 'messages': messages,
+                'timing': timer.report()}
         if s['gmail_category']:
             data['gmail_category'] = s['gmail_category']
         return {'data': data}
     except MailError as e:
-        # Errors that pass on their own keep the last mail on screen
-        if e.code in KEEP_PREVIOUS and isinstance((previous.get('data') or {}).get('messages'), list):
-            return previous
-        return {'data': {'success': False, 'code': e.code, 'error': e.code.replace('_', ' ').title(),
-                         'message': e.message}}
+        code, message = e.code, e.message
     except Exception:
-        if isinstance((previous.get('data') or {}).get('messages'), list):
-            return previous
-        return {'data': {'success': False, 'code': 'UNEXPECTED_ERROR', 'error': 'Unexpected Error',
-                         'message': 'Something went wrong while reading your mail.'}}
+        code, message = 'UNEXPECTED_ERROR', 'Something went wrong while reading your mail.'
+    timing = timer.report()
+    # Errors that pass on their own keep the last mail on screen, marked with this run's code and timing
+    previous_data = previous.get('data') or {}
+    if code in KEEP_PREVIOUS and isinstance(previous_data.get('messages'), list):
+        return {**previous, 'data': {**previous_data, 'timing': timing, 'stale_reason': code}}
+    return {'data': {'success': False, 'code': code, 'error': code.replace('_', ' ').title(),
+                     'message': message, 'timing': timing}}
