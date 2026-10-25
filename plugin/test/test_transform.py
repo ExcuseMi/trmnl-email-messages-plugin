@@ -124,7 +124,7 @@ def test_limit_is_clamped():
 def test_timing_is_in_the_payload():
     timing = run(GMAIL)['data']['timing']
     assert list(timing['steps_ms']) == ['connect', 'login', 'select', 'search', 'fetch']
-    assert timing['total_ms'] <= timing['limit_ms'] == 4000
+    assert timing['total_ms'] <= timing['limit_ms'] == 3500
 
 
 def test_errors_carry_timing_too():
@@ -162,9 +162,9 @@ def test_each_step_may_only_wait_for_the_time_left(monkeypatch):
     monkeypatch.setattr(FakeImap, 'login', login)
     run(GMAIL)
     imap = FakeImap.instances[0]
-    assert imap.connect_timeout == 4.0
+    assert imap.connect_timeout == 3.5
     timeouts = imap.sock.timeouts[:-1]  # the last one is the short logout timeout
-    assert timeouts[0] == 4.0 and all(t == 2.5 for t in timeouts[1:])
+    assert timeouts[0] == 3.5 and all(t == 2.0 for t in timeouts[1:])
 
 
 def test_list_is_the_default_display():
@@ -202,23 +202,68 @@ def test_invitations_hidden_when_asked(monkeypatch):
     assert 'BODYSTRUCTURE' in fetch[2]
 
 
-def test_preview_gives_every_entry_its_text_in_one_fetch(monkeypatch):
-    def full(sender, subject, date, text):
-        return (f'From: {sender}\r\nSubject: {subject}\r\nDate: {date}\r\nContent-Type: text/plain\r\n\r\n{text}\r\n').encode()
-    first = full('jurgen@example.com', 'Cafe', 'Sat, 25 Oct 2026 09:00:00 +0000', 'See you at 8.\r\n\r\nJ.')
-    second = full('bob@example.com', 'Older', 'Fri, 24 Oct 2026 09:00:00 +0000', 'word ' * 400)
+def full_mail(sender, subject, date, text):
+    return (f'From: {sender}\r\nSubject: {subject}\r\nDate: {date}\r\nContent-Type: text/plain\r\n\r\n{text}\r\n').encode()
 
-    def fetch(self, ids, what):
-        self.commands.append(('fetch', ids, what))
-        return 'OK', [(b'1 (FLAGS (\\Seen) BODY[]<0> {80}', second), b')',
-                      (b'2 (FLAGS (\\Flagged) BODY[]<0> {80}', first), b')']
-    monkeypatch.setattr(FakeImap, 'fetch', fetch)
+
+FIRST = full_mail('jurgen@example.com', 'Cafe', 'Sat, 25 Oct 2026 09:00:00 +0000', 'See you at 8.\r\n\r\nJ.')
+SECOND = full_mail('bob@example.com', 'Older', 'Fri, 24 Oct 2026 09:00:00 +0000', 'word ' * 400)
+
+
+def preview_fetch(self, ids, what):
+    self.commands.append(('fetch', ids, what))
+    if 'HEADER.FIELDS' in what:
+        return 'OK', [(b'1 (FLAGS (\\Seen) BODY[HEADER.FIELDS (FROM SUBJECT DATE)] {80}', SECOND), b')',
+                      (b'2 (FLAGS (\\Flagged) BODY[HEADER.FIELDS (FROM SUBJECT DATE)] {80}', FIRST), b')']
+    texts = {'1': SECOND, '2': FIRST}
+    return 'OK', [(f'{i} (BODY[]<0> {{80}}'.encode(), texts[i]) for i in ids.split(',')]
+
+
+def test_preview_fetches_text_only_for_the_shown_entries(monkeypatch):
+    monkeypatch.setattr(FakeImap, 'fetch', preview_fetch)
     data = run({**GMAIL, 'display': 'preview'})['data']
     newest, older = data['messages']
     assert newest['subject'] == 'Cafe' and newest['paragraphs'] == ['See you at 8.', 'J.'] and newest['flagged']
     assert older['read'] and older['truncated'] and len(older['body']) <= transform.SNIPPET_CHARS + 1
     fetches = [c for c in FakeImap.instances[0].commands if c[0] == 'fetch']
-    assert len(fetches) == 1 and fetches[0][2] == f'(FLAGS BODY.PEEK[]<0.{transform.SNIPPET_BYTES}>)'
+    assert fetches[1] == ('fetch', '2,1', f'(BODY.PEEK[]<0.{transform.SNIPPET_BYTES}>)')
+    data = run({**GMAIL, 'display': 'preview', 'limit': '1'})['data']
+    assert FakeImap.instances[1].commands[-1][1] == '2'  # 2026-10-25: one fetch of all candidates timed out
+
+
+def test_preview_short_of_time_shows_the_list_without_text(monkeypatch):
+    clock = FakeClock()
+    monkeypatch.setattr(transform.time, 'monotonic', clock)
+
+    def slow_text(self, ids, what):
+        if 'HEADER.FIELDS' not in what:
+            clock.now += 3.2  # the text arrives, but too late to parse it
+        return preview_fetch(self, ids, what)
+    monkeypatch.setattr(FakeImap, 'fetch', slow_text)
+    data = run({**GMAIL, 'display': 'preview'})['data']
+    assert data['success'] and [m['subject'] for m in data['messages']] == ['Cafe', 'Older']
+    assert not any(m.get('paragraphs') for m in data['messages'])
+
+
+def test_a_long_answer_cannot_pass_the_deadline(monkeypatch):
+    # A server that keeps sending lines: every line read gets only the time left of the whole run
+    clock = FakeClock()
+    monkeypatch.setattr(transform.time, 'monotonic', clock)
+
+    def readline(self):
+        clock.now += 0.5
+        return b'* line\r\n'
+
+    original = FakeImap.fetch
+
+    def dribbling_fetch(self, ids, what):
+        for _ in range(20):  # 10 s of lines
+            self.readline()
+        return original(self, ids, what)
+    monkeypatch.setattr(FakeImap, 'readline', readline, raising=False)
+    monkeypatch.setattr(FakeImap, 'fetch', dribbling_fetch)
+    data = run(GMAIL)['data']
+    assert data['code'] == 'TIMEOUT' and clock.now - 1000.0 <= transform.DEADLINE_SECONDS + 0.5
 
 
 def test_plain_list_fetches_no_text():

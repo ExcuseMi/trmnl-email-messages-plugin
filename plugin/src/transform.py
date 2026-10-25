@@ -23,12 +23,13 @@ SERVERS = {
     'icloud': ('imap.mail.me.com', 993, 'icloud_password'),
 }
 MAX_MESSAGES = 50
-DEADLINE_SECONDS = 4.0  # TRMNL stops a run after 5 s; the rest is margin for parsing and the return
+DEADLINE_SECONDS = 3.5  # TRMNL stops a run after 5 s, sandbox start included; the rest is margin
 KEEP_PREVIOUS = {'TIMEOUT', 'CONNECTION', 'PROTOCOL', 'UNEXPECTED_ERROR'}
 UNSAFE_CHARS = set('"\\\r\n\0')
 FETCH_BYTES = 64 * 1024  # latest message: only its start, the text comes before attachments
 MAX_BODY_CHARS = 3000  # more never fits a screen; keeps the plugin data small
-SNIPPET_BYTES = 16 * 1024  # List with preview: the start of every message, in one fetch
+SNIPPET_BYTES = 8 * 1024  # List with preview: the start of each shown message
+PARSE_MARGIN = 0.5  # seconds kept free: entries left unparsed then show without text
 SNIPPET_CHARS = 500  # per entry: a few lines on screen, small plugin data for up to 50 entries
 INVITE_STRUCTURE = re.compile(rb'"(text" "calendar|application" "ics)"', re.I)  # an .ics part in BODYSTRUCTURE
 INVITE_LOOKBACK = 10  # latest message: how many recent ones to check for a non-invitation
@@ -332,6 +333,11 @@ def read_mailbox(s, timer, read):
             timer.left()
 
     try:
+        # Every line read re-arms the socket timeout with what is left, so a long answer cannot pass the deadline
+        for name in ('readline', 'read'):
+            original = getattr(client, name, None)
+            if original is not None:
+                setattr(client, name, lambda *a, _f=original: (guard(), _f(*a))[1])
         guard()
         try:
             client.login(s['username'], s['password'])
@@ -366,6 +372,25 @@ def is_invitation(fetch_line):
     return bool(INVITE_STRUCTURE.search(fetch_line))
 
 
+def add_snippets(client, messages, s, timer, guard):
+    """List with preview: the start of each shown message; entries get no text when time runs short"""
+    try:
+        guard()
+        status, data = client.fetch(','.join(m['msg_id'] for m in messages), f'(BODY.PEEK[]<0.{SNIPPET_BYTES}>)')
+    except (MailError, socket.timeout, TimeoutError):
+        return messages  # the list without text beats a timeout
+    timer.step('fetch_text')
+    raw = {part[0].split(b' ', 1)[0].decode(): part[1] for part in data if isinstance(part, tuple)} if status == 'OK' else {}
+    result = []
+    for m in messages:
+        if m['msg_id'] in raw and timer.deadline - (time.monotonic() - timer.started) > PARSE_MARGIN:
+            full = parse_full_message(raw[m['msg_id']], b'', s['hide_quoted'], SNIPPET_CHARS)
+            m = {**m, **{k: full[k] for k in ('body', 'paragraphs', 'truncated', 'has_attachments', 'encrypted')}}
+        result.append(m)
+    timer.step('parse')
+    return result
+
+
 def fetch_messages(s, timer):
     def read(client, ids, guard):
         # Hidden invitations would leave gaps: fetch some extra headers to fill the list
@@ -373,23 +398,18 @@ def fetch_messages(s, timer):
         if not ids:
             return []
         guard()
-        preview = s['display'] == 'preview'
-        # List with preview: the start of every message (BODY.PEEK keeps them unread); otherwise headers only
-        what = f'BODY.PEEK[]<0.{SNIPPET_BYTES}>' if preview else 'BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)]'
-        what = f"(FLAGS {'BODYSTRUCTURE ' if s['hide_invites'] else ''}{what})"
+        what = f"(FLAGS {'BODYSTRUCTURE ' if s['hide_invites'] else ''}BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])"
         status, data = client.fetch(b','.join(ids).decode(), what)
         if status != 'OK':
             raise MailError('PROTOCOL', 'The mail server gave an unexpected answer.')
         timer.step('fetch')
         parts = [part for part in data if isinstance(part, tuple)
                  and not (s['hide_invites'] and is_invitation(part[0]))]
-        if preview:
-            messages = [{**parse_full_message(part[1], part[0], s['hide_quoted'], SNIPPET_CHARS),
-                         'msg_id': part[0].split(b' ', 1)[0].decode()} for part in parts]
-            timer.step('parse')
-        else:
-            messages = [parse_message(part[0].split(b' ', 1)[0].decode(), part[0], part[1]) for part in parts]
-        return sorted(messages, key=lambda m: m['timestamp'], reverse=True)[:s['limit']]
+        messages = [parse_message(part[0].split(b' ', 1)[0].decode(), part[0], part[1]) for part in parts]
+        messages = sorted(messages, key=lambda m: m['timestamp'], reverse=True)[:s['limit']]
+        if s['display'] == 'preview' and messages:
+            messages = add_snippets(client, messages, s, timer, guard)
+        return messages
     return read_mailbox(s, timer, read)
 
 
