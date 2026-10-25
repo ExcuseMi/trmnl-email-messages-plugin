@@ -1,36 +1,18 @@
 ---
-strategy: polling
+strategy: static
 no_screen_padding: 'no'
 dark_mode: 'no'
-static_data: ''
-polling_verb: post
-framework_version: 2.3.7
-serverless_language: node
+static_data: "{}"
+polling_verb: get
+framework_version: latest
+serverless_language: python
 refresh_interval_floor:
-polling_url: https://trmnl.bettens.dev/email/messages
-polling_headers: content-type=application/json
-polling_body: "{\r\n  {% if provider == \"gmail\" %}\r\n  \"server\": \"imap.gmail.com\",\r\n  \"port\": 993,\r\n  \"password\": {{ gmail_password | json }}\r\n  {% elsif provider == \"outlook\" %}\r\n  \"server\": \"outlook.office365.com\",\r\n  \"port\": 993,\r\n  \"password\": {{ outlook_password | json }}\r\n  {% elsif provider == \"yahoo\" %}\r\n  \"server\": \"imap.mail.yahoo.com\",\r\n  \"port\": 993,\r\n  \"password\": {{ yahoo_password | json }}\r\n  {% elsif provider == \"icloud\" %}\r\n  \"server\": \"imap.mail.me.com\",\r\n  \"port\": 993,\r\n  \"password\": {{ icloud_password | json }}\r\n  {% elsif provider == \"custom\" %}\r\n  \"server\": {{ custom_server | json }},\r\n  \"port\": {{ custom_port | default: 993 | plus: 0 }},\r\n  \"password\": {{ custom_password | json }}\r\n  {% endif %},\r\n\r\n  \"username\": {{ email | json }},\r\n  \"folder\": {{ folder | default: \"INBOX\" | json }},\r\n  \"limit\": {{ limit | default: 10 | plus: 0 }},\r\n  \"unread_only\": {% if unread_only == \"yes\" %}true{% else %}false{% endif %},\r\n  \"flagged_only\": {% if flagged_only == \"yes\" %}true{% else %}false{% endif %}\r\n\r\n  {% if provider == \"gmail\" and gmail_category and gmail_category != \"\" %},\r\n  \"gmail_category\": {{ gmail_category | json }}\r\n  {% endif %}\r\n\r\n  {% if from_emails and from_emails != \"\" %},\r\n  \"from_emails\": {{ from_emails | json }}\r\n  {% endif %}\r\n}"
+polling_url:
+polling_headers:
+polling_body:
 id: 198482
 oauth_enabled: 'false'
 oauth_pkce_enabled: 'no'
-oauth_authorize_url: ''
-oauth_token_url: ''
-oauth_scopes: ''
-oauth_scope_separator: ''
-oauth_refresh_url: ''
-oauth_auth_params: ''
-oauth_token_headers: ''
-oauth_token_site: ''
-oauth_token_params: ''
-oauth_token_request_auth_method: ''
-oauth_body_format: ''
-oauth_token_response_metadata: ''
-oauth_authorization_method: ''
-oauth_refresh_params: ''
-oauth_token_field_name: ''
-oauth_expiry_field_name: ''
-oauth_expiry_strategy: ''
-oauth_fixed_expiry_ms: ''
 custom_fields:
 - keyname: author_bio
   field_type: author_bio

@@ -60,7 +60,7 @@
 <div class="layout layout--stretch layout--center">
   {% if data.error %}
   <div class="flex flex--col flex--center text-center px--4">
-    <div class="title title--medium mb--2">{{ data.error | escape }}</div>
+    <span class="label label--large label--error mb--2">{{ data.error | escape }}</span>
     {% if data.message %}
     <div class="description">{{ data.message | escape }}</div>
     {% endif %}
@@ -141,39 +141,46 @@
           {% endif %}
           <span class="{{subject_classes}}" data-clamp="3">{{ message.subject | escape }}</span>
 
+          {% comment %} Framework label variants: flagged needs attention, read mail is secondary {% endcomment %}
+          {% assign meta_label = "label label--small" %}
+          {% if message.flagged %}
+          {% assign meta_label = "label label--small label--warning" %}
+          {% elsif message.read %}
+          {% assign meta_label = "label label--small label--gray" %}
+          {% endif %}
           <div class="flex flex--row flex--wrap gap--small">
             {% comment %} Show time only if grouped, otherwise show time/date based on today {% endcomment %}
             {% if group_by_date == "yes" %}
             {% comment %} Grouped mode: always show time {% endcomment %}
             {% if time_format == "12h" %}
-            <span class="label label--small">{{ adjusted_epoch | date: "%-I:%M %p" }} ·</span>
+            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%-I:%M %p" }}</span>
             {% else %}
-            <span class="label label--small">{{ adjusted_epoch | date: "%H:%M" }} ·</span>
+            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%H:%M" }}</span>
             {% endif %}
             {% else %}
             {% comment %} Ungrouped mode: show time for today, date for older {% endcomment %}
             {% if message_date == today_date %}
             {% if time_format == "12h" %}
-            <span class="label label--small">{{ adjusted_epoch | date: "%-I:%M %p" }} ·</span>
+            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%-I:%M %p" }}</span>
             {% else %}
-            <span class="label label--small">{{ adjusted_epoch | date: "%H:%M" }} ·</span>
+            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%H:%M" }}</span>
             {% endif %}
             {% else %}
             {% if date_format == "medium" %}
-            <span class="label label--small">{{ adjusted_epoch | date: "%b %-d, %Y" }} ·</span>
+            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%b %-d, %Y" }}</span>
             {% elsif date_format == "long" %}
-            <span class="label label--small">{{ adjusted_epoch | date: "%B %-d, %Y" }} ·</span>
+            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%B %-d, %Y" }}</span>
             {% elsif date_format == "numeric" %}
-            <span class="label label--small">{{ adjusted_epoch | date: "%m/%d/%y" }} ·</span>
+            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%m/%d/%y" }}</span>
             {% elsif date_format == "iso" %}
-            <span class="label label--small">{{ adjusted_epoch | date: "%Y-%m-%d" }} ·</span>
+            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%Y-%m-%d" }}</span>
             {% else %}
-            <span class="label label--small">{{ adjusted_epoch | date: "%b %-d" }} ·</span>
+            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%b %-d" }}</span>
             {% endif %}
             {% endif %}
             {% endif %}
 
-            <span class="label label--small label--underline">
+            <span class="label label--small label--underline{% if message.read and message.flagged != true %} label--gray{% endif %}">
               {% if trmnl.plugin_settings.custom_fields_values.show_sender_email == "yes" %}
               {{ message.sender_email | escape }}
               {% else %}
