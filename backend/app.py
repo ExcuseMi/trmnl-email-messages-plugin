@@ -26,6 +26,7 @@ from modules.providers.imap_provider import (
 )
 from modules.utils.cache import CacheManager
 from modules.utils.security import credential_hash, check_mail_server, client_ip
+from modules.utils.login_limit import LoginLimiter
 
 warnings.filterwarnings('ignore', category=ResourceWarning)
 
@@ -69,6 +70,7 @@ imap_provider = IMAPProvider(
     fetch_timeout=IMAP_FETCH_TIMEOUT
 )
 cache_manager = None  # Initialized in startup
+login_limiter = LoginLimiter()  # Redis-backed after startup
 
 
 def mask_email(email_addr):
@@ -280,10 +282,12 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
         logger.warning(f"[{request_id}] 🚫 {server_error}")
         return {'success': False, 'error': 'Invalid Server', 'message': server_error, 'code': 'INVALID_SERVER'}
 
+    credential = credential_hash(password, oauth_token)
+    account = LoginLimiter.account_key(server, username)
     cache_params = {
         'provider': 'imap', 'server': server, 'port': port, 'username': username,
         'auth_type': 'oauth' if oauth_token else 'password',
-        'credential': credential_hash(password, oauth_token),
+        'credential': credential,
         'folder': folder, 'limit': limit, 'unread_only': unread_only,
         'flagged_only': flagged_only, 'gmail_category': gmail_category,
         'from_emails': sorted(from_emails) if from_emails else []
@@ -294,6 +298,12 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
     if cached_response:
         logger.info(f"[{request_id}] 💾 Cache HIT")
         return cached_response
+
+    limited = login_limiter.blocked(account, credential)
+    if limited:
+        logger.warning(f"[{request_id}] 🚫 Login limit for {masked_username}")
+        return {'success': False, 'error': 'Too Many Failed Logins', 'message': limited,
+                'code': 'TOO_MANY_FAILURES'}
 
     try:
         messages = await imap_provider.fetch_messages(
@@ -313,9 +323,11 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
         if from_emails:
             response_data['from_emails'] = from_emails
         cache_manager.set(cache_key, response_data)
+        login_limiter.succeeded(account, credential)
         return response_data
 
     except IMAPAuthenticationError as e:
+        login_limiter.failed(account)
         cached_fallback = cache_manager.get(cache_key)
         is_oauth = bool(oauth_token)
         if cached_fallback:
@@ -456,7 +468,7 @@ logger.info("=" * 60)
 
 
 async def startup_init():
-    global TRMNL_IPS, last_ip_refresh, cache_manager
+    global TRMNL_IPS, last_ip_refresh, cache_manager, login_limiter
 
     if ENABLE_IP_WHITELIST:
         ips = await fetch_trmnl_ips()
@@ -471,6 +483,10 @@ async def startup_init():
         redis_host=REDIS_HOST, redis_port=REDIS_PORT, redis_db=REDIS_DB,
         ttl_seconds=CACHE_TTL_SECONDS, enabled=ENABLE_CACHE
     )
+    if cache_manager.redis_client:
+        login_limiter = LoginLimiter(cache_manager.redis_client)
+    else:
+        logger.warning("⚠️  Login limit per worker only (no Redis)")
 
     if ENABLE_CACHE:
         logger.info(f"💾 Cache enabled (TTL: {CACHE_TTL_SECONDS}s)")

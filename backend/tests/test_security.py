@@ -26,6 +26,7 @@ class MemoryCache(CacheManager):
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(backend, 'cache_manager', MemoryCache())
+    monkeypatch.setattr(backend, 'login_limiter', backend.LoginLimiter())
     monkeypatch.setattr(backend, 'ENABLE_IP_WHITELIST', False)
     public = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('142.250.27.108', 993))]
     monkeypatch.setattr(socket, 'getaddrinfo', lambda *a, **k: public)
