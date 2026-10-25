@@ -192,9 +192,8 @@ custom_fields:
   min: 1
   max: 65535
   help_text: |
-    <strong>Recommended: 993</strong> (SSL/TLS encrypted connection)<br /><br />
-    Use 143 only if your provider requires non-SSL IMAP.<br /><br />
-    <em>Always prefer encrypted connections for security. Most modern email providers use port 993.</em>
+    <strong>Usually 993.</strong> The plugin always connects with SSL/TLS (implicit TLS);
+    port 143 (plain IMAP or STARTTLS) is not supported.
 - keyname: folder
   field_type: string
   name: Mailbox Folder
