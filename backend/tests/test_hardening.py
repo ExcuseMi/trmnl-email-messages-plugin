@@ -49,3 +49,12 @@ def test_every_dependency_is_pinned():
              if line and not line.startswith('#')]
     assert all('==' in line for line in lines)
     assert any(line.lower().startswith('h11==') for line in lines)
+
+
+def test_oauth_is_not_accepted(client, monkeypatch):  # noqa: F811
+    async def fetch(**kw):
+        raise AssertionError('must not connect')
+    monkeypatch.setattr(backend.imap_provider, 'fetch_messages', fetch)
+    no_password = {k: v for k, v in body().items() if k != 'password'}
+    resp = client.post('/messages', json={**no_password, 'oauth_access_token': 'token'})
+    assert resp.status_code == 400

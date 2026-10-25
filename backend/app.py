@@ -82,15 +82,7 @@ def mask_email(email_addr):
     return f"{local[0]}***@{domain}"
 
 
-def format_auth_error(email_addr, error_message, is_oauth=False):
-    if is_oauth:
-        return (
-            "OAuth authentication failed. Please check that:\n"
-            "1. Your OAuth connection in TRMNL is still valid\n"
-            "2. The required scopes are granted\n"
-            "3. Your email provider supports OAuth2\n"
-            "You may need to reconnect your account in TRMNL settings."
-        )
+def format_auth_error(email_addr):
     domain = email_addr.lower().split('@')[-1] if '@' in email_addr else ''
     base_msg = "Unable to connect to your email account. "
     if 'gmail.com' in domain:
@@ -187,7 +179,7 @@ def public_error_message(e):
 
 def validate_params(data) -> Optional[str]:
     """Return an error message for a malformed request, else None"""
-    for key in ('server', 'username', 'password', 'oauth_access_token', 'folder', 'gmail_category'):
+    for key in ('server', 'username', 'password', 'folder', 'gmail_category'):
         if data.get(key) is not None and not isinstance(data[key], str):
             return f'{key} must be a string'
     for key in ('port', 'limit'):
@@ -246,7 +238,6 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
     server = params.get('server')
     username = params.get('username')
     password = params.get('password')
-    oauth_token = params.get('oauth_access_token')
     port = params.get('port', 993)
     folder = params.get('folder', 'INBOX')
     limit = min(max(params.get('limit', 10), 1), MAX_MESSAGES_LIMIT)
@@ -268,7 +259,7 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
         from_emails = []
 
     masked_username = mask_email(username)
-    auth_method = "OAuth" if oauth_token else "Password"
+    auth_method = "Password"
 
     filters = []
     if gmail_category:
@@ -291,11 +282,11 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
         logger.warning(f"[{request_id}] 🚫 {server_error}")
         return {'success': False, 'error': 'Invalid Server', 'message': server_error, 'code': 'INVALID_SERVER'}
 
-    credential = credential_hash(password, oauth_token)
+    credential = credential_hash(password)
     account = LoginLimiter.account_key(server, username)
     cache_params = {
         'provider': 'imap', 'server': server, 'port': port, 'username': username,
-        'auth_type': 'oauth' if oauth_token else 'password',
+        'auth_type': 'password',
         'credential': credential,
         'folder': folder, 'limit': limit, 'unread_only': unread_only,
         'flagged_only': flagged_only, 'gmail_category': gmail_category,
@@ -319,7 +310,7 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
             server=server, port=port, username=username, password=password,
             folder=folder, limit=limit, unread_only=unread_only,
             flagged_only=flagged_only, gmail_category=gmail_category,
-            from_emails=from_emails, oauth_token=oauth_token, request_id=request_id
+            from_emails=from_emails, request_id=request_id
         )
         response_data = {
             'success': True, 'provider': 'imap', 'email': username,
@@ -338,14 +329,13 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
     except IMAPAuthenticationError as e:
         login_limiter.failed(account)
         cached_fallback = cache_manager.get(cache_key)
-        is_oauth = bool(oauth_token)
         if cached_fallback:
             logger.warning(f"[{request_id}] 🔒 Auth failed ({auth_method}), returning stale cache")
             cached_fallback.update({
                 'success': False, 'cached': True,
                 'cache_warning': 'Authentication failed - returning cached data',
                 'error': {
-                    'message': format_auth_error(username, str(e), is_oauth),
+                    'message': format_auth_error(username),
                     'type': 'AUTH_FAILED', 'auth_method': auth_method,
                     'occurred_at': datetime.now().isoformat()
                 }
@@ -354,7 +344,7 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
         logger.warning(f"[{request_id}] 🔒 Auth failed ({auth_method}) for {masked_username} (no cache)")
         return {
             'success': False, 'error': 'Authentication Failed',
-            'message': format_auth_error(username, str(e), is_oauth),
+            'message': format_auth_error(username),
             'code': 'AUTH_FAILED', 'auth_method': auth_method, 'email': username
         }
 
@@ -429,12 +419,11 @@ def register_routes(app):
         server = data.get('server')
         username = data.get('username')
         password = data.get('password')
-        oauth_token = data.get('oauth_access_token')
 
-        if not all([server, username]) or not (password or oauth_token):
+        if not all([server, username, password]):
             return jsonify({
                 'error': 'Missing required parameters',
-                'required': ['server', 'username', 'password OR oauth_access_token']
+                'required': ['server', 'username', 'password']
             }), 400
 
         return jsonify(await _fetch_messages(data, request_id))
@@ -449,7 +438,7 @@ def register_routes(app):
             'status': 'healthy',
             'service': 'email-reader',
             'providers': ['imap'],
-            'features': ['password_auth', 'oauth2_auth'],
+            'features': ['password_auth'],
             'python': sys.version.split()[0],
             'timestamp': datetime.now().isoformat()
         }
@@ -466,7 +455,7 @@ app = create_app()
 logger.info("=" * 60)
 logger.info("🚀 Email Reader")
 logger.info(f"   Python {sys.version.split()[0]}")
-logger.info(f"   Provider: IMAP (password/OAuth)")
+logger.info(f"   Provider: IMAP (app password)")
 logger.info(f"   Features: Caching, IP Whitelist")
 logger.info("=" * 60)
 

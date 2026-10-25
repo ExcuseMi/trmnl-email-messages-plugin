@@ -10,9 +10,9 @@ from typing import Optional
 DNS_TIMEOUT_SECONDS = 5
 
 
-def credential_hash(password: Optional[str], oauth_token: Optional[str]) -> str:
-    """Hash of the credential, so a cache entry is only served to the credential that filled it"""
-    secret = oauth_token or password or ''
+def credential_hash(password: Optional[str]) -> str:
+    """Hash of the password, so a cache entry is only served to the password that filled it"""
+    secret = password or ''
     return hashlib.sha256(secret.encode()).hexdigest()
 
 

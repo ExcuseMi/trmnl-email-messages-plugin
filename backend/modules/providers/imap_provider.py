@@ -1,6 +1,6 @@
 """
 IMAP Email Provider
-Fetches emails using IMAP protocol with password or OAuth2 authentication
+Fetches emails using IMAP protocol with password (app password) authentication
 """
 import aioimaplib
 import email
@@ -62,7 +62,6 @@ class IMAPProvider:
             flagged_only: bool = False,
             gmail_category: Optional[str] = None,
             from_emails: Optional[List[str]] = None,
-            oauth_token: Optional[str] = None,
             request_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
@@ -79,7 +78,6 @@ class IMAPProvider:
             flagged_only: Only fetch flagged messages
             gmail_category: Gmail category filter
             from_emails: List of sender emails/domains
-            oauth_token: OAuth2 token (for OAuth authentication)
             request_id: Request ID for logging
 
         Returns:
@@ -119,19 +117,14 @@ class IMAPProvider:
             if not peer or not is_public_address(peer[0]):
                 raise IMAPConnectionError('Server address not allowed')
 
-            # Login - OAuth or Password
+            # Login with the (app) password
             try:
-                if oauth_token:
-                    # OAuth2 authentication
-                    await self._oauth_login(client, username, oauth_token, req_prefix)
-                else:
-                    # Password authentication
-                    login_response = await asyncio.wait_for(
-                        client.login(username, password),
-                        timeout=self.login_timeout
-                    )
-                    if login_response.result != 'OK':
-                        raise IMAPAuthenticationError('Invalid credentials')
+                login_response = await asyncio.wait_for(
+                    client.login(username, password),
+                    timeout=self.login_timeout
+                )
+                if login_response.result != 'OK':
+                    raise IMAPAuthenticationError('Invalid credentials')
 
                 authenticated = True
 
@@ -257,55 +250,6 @@ class IMAPProvider:
 
         finally:
             await self._cleanup_connection(client, request_id)
-
-    async def _oauth_login(
-            self,
-            client: aioimaplib.IMAP4_SSL,
-            username: str,
-            oauth_token: str,
-            req_prefix: str
-    ):
-        """Perform OAuth2 XOAUTH2 authentication"""
-        import base64
-
-        # Generate XOAUTH2 string
-        auth_string = f"user={username}\x01auth=Bearer {oauth_token}\x01\x01"
-        auth_string_b64 = base64.b64encode(auth_string.encode()).decode()
-
-        # Get tag
-        tag = client.protocol.new_tag()
-        if isinstance(tag, bytes):
-            tag = tag.decode()
-
-        # Send AUTHENTICATE XOAUTH2
-        auth_cmd = f'{tag} AUTHENTICATE XOAUTH2\r\n'
-        client.protocol.transport.write(auth_cmd.encode())
-
-        # Wait for + continuation
-        await asyncio.sleep(0.2)
-
-        # Send base64 auth string
-        client.protocol.transport.write(f'{auth_string_b64}\r\n'.encode())
-
-        # Wait for response
-        await asyncio.sleep(0.5)
-
-        # Verify with NOOP
-        try:
-            noop_response = await asyncio.wait_for(client.noop(), timeout=5)
-
-            if noop_response.result == 'OK':
-                logger.debug(f"{req_prefix} ✓ OAuth authentication successful")
-            else:
-                raise IMAPAuthenticationError('OAuth authentication verification failed')
-        except Exception as e:
-            error_str = str(e).lower()
-            if 'authenticationfailed' in error_str or 'invalid credentials' in error_str:
-                raise IMAPAuthenticationError(
-                    'OAuth token rejected. Token may be expired or missing required scope (https://mail.google.com/). '
-                    'Disconnect and reconnect Gmail in TRMNL to get a fresh token.'
-                )
-            raise IMAPAuthenticationError(f'OAuth verification error: {e}')
 
     def _build_search_criteria(
             self,
