@@ -15,6 +15,9 @@ COPY modules/ ./modules/
 # Make entrypoint executable
 RUN chmod +x entrypoint.sh
 
+# No root inside the container
+USER nobody
+
 # Expose port
 EXPOSE 5000
 

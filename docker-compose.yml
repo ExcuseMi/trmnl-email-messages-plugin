@@ -20,6 +20,11 @@ services:
       redis:
         condition: service_healthy
     container_name: imap-reader
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "5005:5000"
     env_file:

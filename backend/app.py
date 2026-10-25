@@ -178,7 +178,11 @@ def public_error_message(e):
         return 'Could not connect to the mail server. Check the server name and port.'
     if isinstance(e, IMAPTimeoutError):
         return 'The mail server took too long to answer.'
-    return str(e)
+    if isinstance(e, IMAPProtocolError) and str(e).startswith('Failed to select folder'):
+        return str(e)
+    if isinstance(e, IMAPProtocolError):
+        return 'The mail server gave an unexpected answer.'
+    return 'Something went wrong while reading your mail.'
 
 
 def validate_params(data) -> Optional[str]:
@@ -190,6 +194,11 @@ def validate_params(data) -> Optional[str]:
         if data.get(key) is not None and (isinstance(data[key], bool) or not isinstance(data[key], int)):
             return f'{key} must be a number'
     from_emails = data.get('from_emails')
+    # These go into IMAP commands: a quote or line break would add commands of the caller's choosing
+    for value in [data.get('folder'), data.get('gmail_category')] + (
+            from_emails if isinstance(from_emails, list) else [from_emails]):
+        if isinstance(value, str) and any(c in value for c in '"\\\r\n\0'):
+            return 'folder, gmail_category and from_emails must not contain quotes, backslashes or line breaks'
     if from_emails is not None and not isinstance(from_emails, (str, list)):
         return 'from_emails must be a string or a list'
     if isinstance(from_emails, list) and not all(isinstance(e, str) for e in from_emails):
@@ -378,12 +387,13 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
             logger.warning(f"[{request_id}] ⚠️  Unexpected error, returning stale cache")
             cached_fallback.update({
                 'success': False, 'cached': True,
-                'error': {'message': str(e), 'type': 'UNEXPECTED_ERROR',
+                'error': {'message': public_error_message(e), 'type': 'UNEXPECTED_ERROR',
                           'occurred_at': datetime.now().isoformat()}
             })
             return cached_fallback
         logger.error(f"[{request_id}] ✗ Unexpected error: {e}")
-        return {'success': False, 'error': 'Unexpected Error', 'message': str(e), 'code': 'UNEXPECTED_ERROR'}
+        return {'success': False, 'error': 'Unexpected Error', 'message': public_error_message(e),
+                'code': 'UNEXPECTED_ERROR'}
 
 
 def _extract_params(req) -> dict:
@@ -394,8 +404,12 @@ def _extract_params(req) -> dict:
 # Routes
 # ---------------------------------------------------------------------------
 
+MAX_REQUEST_BYTES = 64 * 1024
+
+
 def create_app():
     app = Flask(__name__)
+    app.config['MAX_CONTENT_LENGTH'] = MAX_REQUEST_BYTES
     register_routes(app)
     return app
 
@@ -427,9 +441,7 @@ def register_routes(app):
 
     @app.route('/health')
     def health():
-        client_ip = get_client_ip()
         with TRMNL_IPS_LOCK:
-            is_whitelisted = client_ip in TRMNL_IPS if ENABLE_IP_WHITELIST else True
             trmnl_count = len(TRMNL_IPS)
             last_refresh = last_ip_refresh.isoformat() if last_ip_refresh else None
 
@@ -442,17 +454,9 @@ def register_routes(app):
             'timestamp': datetime.now().isoformat()
         }
 
-        if ENABLE_IP_WHITELIST:
-            health_data['ip_whitelist'] = {
-                'enabled': True,
-                'your_ip': client_ip,
-                'whitelisted': is_whitelisted,
-                'ips_loaded': trmnl_count,
-                'last_refresh': last_refresh,
-                'refresh_interval_hours': IP_REFRESH_HOURS
-            }
-        else:
-            health_data['ip_whitelist'] = {'enabled': False, 'your_ip': client_ip}
+        # No caller IP or whitelist verdict here: that would tell a prober whether a spoof worked
+        health_data['ip_whitelist'] = {'enabled': ENABLE_IP_WHITELIST, 'ips_loaded': trmnl_count,
+                                       'last_refresh': last_refresh}
 
         return jsonify(health_data)
 
