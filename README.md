@@ -11,58 +11,20 @@ This plugin connects to your email account via IMAP and displays your most recen
 1. **Choose your email provider** (Gmail, Outlook, Yahoo, iCloud, or Custom)
 2. **Generate an app password** (required for security)
 3. **Configure your preferences** (filters, display options, etc.)
-4. **Deploy the backend** to read your emails
-
-## 🏗️ Backend Deployment
-
-This plugin requires a backend service to fetch emails via IMAP.
-The recipe would use my personal server to get the latest email via IMAP.
-If you want to fork my recipe and setup your own backend, feel free.
-
-### Deploy with Docker
-
-```bash
-# Clone the repository
-git clone https://github.com/ExcuseMi/trmnl-email-messages-plugin
-cd trmnl-email-messages-plugin
-
-# Build and run
-docker-compose up -d
-```
-
-### Environment Variables
-
-```env
-ENABLE_IP_WHITELIST=true    # Restrict access to TRMNL IPs only
-IP_REFRESH_HOURS=24         # How often to refresh IP whitelist
-LOG_LEVEL=INFO              # Logging verbosity
-HYPERCORN_WORKERS=4         # How many workers for the webserver
-# Enable/disable caching
-ENABLE_CACHE=true
-# Cache time-to-live in seconds (default: 300 = 5 minutes)
-CACHE_TTL_SECONDS=300
-REDIS_HOST=redis
-REDIS_PORT=6379
-REDIS_DB=0
-MAX_MESSAGES_LIMIT=30
-IMAP_CONNECT_TIMEOUT=10
-IMAP_LOGIN_TIMEOUT=15
-IMAP_FETCH_TIMEOUT=30
-
-```
 
 ## 🔧 How It Works
 
-```
-TRMNL Display → Polls Backend → Backend connects to Email via IMAP → Fetches messages → Returns to TRMNL → Displays on screen
-```
+The plugin runs entirely inside TRMNL: its serverless code (`plugin/src/transform.py`, Python standard library only) logs in to your mail server over IMAP on every refresh and reads the subject, sender, date and read/flag state of your latest messages. There is no separate backend: your app password goes only from TRMNL to your mail server.
 
-1. **TRMNL polls your backend** every refresh interval
-2. **Backend connects** to your email server using IMAP
-3. **Fetches recent messages** based on your filters
-4. **Returns data** to TRMNL in JSON format
-5. **Display renders** emails using the Liquid template
+- A run stops after 4 seconds (TRMNL's limit is 5); `data.timing` shows how long each step took.
+- When the mail server is briefly unreachable, the previous screen stays.
 
+## 🧪 Tests
+
+```bash
+python3 -m pytest plugin/test     # serverless code against a fake IMAP server
+cd plugin && trmnlp test          # every view and the error screen, with snapshots
+```
 
 ## 🐛 Troubleshooting
 
