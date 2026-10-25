@@ -2,23 +2,20 @@ name: Update Plugin Stats in README
 
 on:
   schedule:
-    - cron: '0 6 * * *'
+    - cron: '0 6 * * *'   # daily at 06:00 UTC
   workflow_dispatch:
   push:
     branches: [ main ]
     paths:
       - '.github/workflows/update-plugin-stats.yml'
       - 'scripts/update_plugin_stats.py'
-      - 'plugins.env'
 
-# Grant explicit permissions
 permissions:
   contents: write
 
 jobs:
   update-stats:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v5
         with:
@@ -30,7 +27,7 @@ jobs:
           python-version: '3.x'
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests pyyaml
 
       - name: Update README with plugin stats
         run: python scripts/update_plugin_stats.py
@@ -38,5 +35,5 @@ jobs:
       - name: Commit and push changes
         uses: stefanzweifel/git-auto-commit-action@v7
         with:
-          commit_message: "📊 Update plugin statistics in README"
+          commit_message: "chore: update plugin stats in README [skip ci]"
           commit_author: "GitHub Actions <actions@github.com>"

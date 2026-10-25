@@ -83,12 +83,7 @@ MIT License - See LICENSE file for details
 
 
 <!-- PLUGIN_STATS_START -->
-## 🚀 TRMNL Plugins
-
-*Last updated: 2026-10-24 10:10:49 UTC*
-
-
-## <img src="assets/plugin-images/198482_icon.png" alt="Email Messages (IMAP) icon" width="32"/> [Email Messages (IMAP)](https://usetrmnl.com/recipes/198482)
+## <img src="assets/plugin-images/198482_icon.svg" alt="Email Messages (IMAP) icon" width="32"/> [Email Messages (IMAP)](https://trmnl.com/recipes/198482)
 
 ![Installs](https://trmnl-badges.gohk.xyz/badge/installs?recipe=198482) ![Forks](https://trmnl-badges.gohk.xyz/badge/forks?recipe=198482)
 
@@ -102,17 +97,6 @@ This plugin connects to your email account via IMAP and shows your latest messag
 <strong>Advanced filtering:</strong> Filter by sender, category, or importance<br />
 <strong>Custom display:</strong> Control how emails appear on your screen
 
-
----
-
-
-## 🔒 Plugin ID: 238783
-
-**Status**: ⏳ Not yet published on TRMNL or API unavailable
-
-This plugin is configured but either hasn't been published to the TRMNL marketplace yet or the API is temporarily unavailable.
-
-**Plugin URL**: https://usetrmnl.com/recipes/238783
 
 ---
 
