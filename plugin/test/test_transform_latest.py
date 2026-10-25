@@ -202,3 +202,27 @@ def test_latest_skips_a_newest_invitation_when_asked(monkeypatch):
     assert body_fetch[1] == '4'
     run(GMAIL)
     assert FakeImap.instances[1].commands[-1][1] == '5'
+
+
+def test_wrapped_plain_text_reads_as_paragraphs():
+    text = ('Beste ouders\n'
+            'Naar aanleiding van de storm vragen we om bij het afhalen van\n'
+            'de kinderen om 15u *niet aan de poort te wachten*.\n-\n'
+            '*Kleuters:* graag afhalen in de klas.\n'
+            '- eerste punt\n- tweede punt\n\n'
+            'Met vriendelijke groeten')
+    assert transform.to_paragraphs(text) == [
+        'Beste ouders\nNaar aanleiding van de storm vragen we om bij het afhalen van de kinderen om 15u '
+        'niet aan de poort te wachten. Kleuters: graag afhalen in de klas.\n- eerste punt\n- tweede punt',
+        'Met vriendelijke groeten']
+
+
+def test_markdown_keeps_bold_lists_and_line_breaks():
+    text = ('Beste ouders\n'
+            'Naar aanleiding van de storm vragen we om bij het afhalen van\n'
+            'de kinderen om 15u *niet aan de poort te wachten*.\n-\n'
+            '- eerste punt\n- tweede punt\n\n'
+            'Met vriendelijke groeten')
+    assert transform.to_markdown(text) == (
+        'Beste ouders  \nNaar aanleiding van de storm vragen we om bij het afhalen van de kinderen om 15u '
+        '**niet aan de poort te wachten**.\n\n- eerste punt\n- tweede punt\n\nMet vriendelijke groeten')

@@ -48,15 +48,16 @@ end
 PREVIEW_BODY = "Hi all,\n\nThe Halloween party is on Friday at 8. Bring something to eat; we have drinks and music.\n\n" \
                "Costumes are welcome but not required. Parking is behind the house.\n\nSee you there!\nJürgen".freeze
 PREVIEW_DATA = { data: { success: true, display: 'preview', email: 'me@example.com', folder: 'INBOX', count: 4,
-                         messages: [MESSAGES[0].merge(expanded: true, body: PREVIEW_BODY, paragraphs: PREVIEW_BODY.split("\n\n"), has_attachments: false,
-                                                      encrypted: false), *MESSAGES[1..]] } }.freeze
+                         messages: MESSAGES.map.with_index do |m, i|
+                           m.merge(body: PREVIEW_BODY, paragraphs: PREVIEW_BODY.split("\n\n").rotate(i), encrypted: false)
+                         end } }.freeze
 
 RSpec.describe 'List with preview' do
   %w[full half_horizontal half_vertical quadrant].each do |view|
-    it "opens the newest entry in #{view}" do
+    it "shows every entry's text in #{view}" do
       screen = trmnl.render(view:, now: NOW, data: PREVIEW_DATA, transform: false, custom_fields: FIELDS.merge(display: 'preview'))
-      expect(screen).to have_css('.item--emphasis-2', count: 1)
-      expect(screen).to have_text('The Halloween party is on Friday')
+      expect(screen).to have_css('.item .description[data-clamp]', minimum: view == 'quadrant' ? 1 : 2)
+      expect(screen).to have_text('Hi all,')
       expect(screen).to have_no_problems
       expect(screen).to match_snapshot
     end

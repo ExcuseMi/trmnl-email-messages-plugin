@@ -202,23 +202,23 @@ def test_invitations_hidden_when_asked(monkeypatch):
     assert 'BODYSTRUCTURE' in fetch[2]
 
 
-def test_preview_expands_the_first_entry_with_its_text(monkeypatch):
-    full = (b'From: =?utf-8?q?J=C3=BCrgen?= <jurgen@example.com>\r\nSubject: Cafe\r\n'
-            b'Date: Sat, 25 Oct 2026 09:00:00 +0000\r\nContent-Type: text/plain\r\n\r\nSee you at 8.\r\n\r\nJ.\r\n')
-    original = FakeImap.fetch
+def test_preview_gives_every_entry_its_text_in_one_fetch(monkeypatch):
+    def full(sender, subject, date, text):
+        return (f'From: {sender}\r\nSubject: {subject}\r\nDate: {date}\r\nContent-Type: text/plain\r\n\r\n{text}\r\n').encode()
+    first = full('jurgen@example.com', 'Cafe', 'Sat, 25 Oct 2026 09:00:00 +0000', 'See you at 8.\r\n\r\nJ.')
+    second = full('bob@example.com', 'Older', 'Fri, 24 Oct 2026 09:00:00 +0000', 'word ' * 400)
 
     def fetch(self, ids, what):
-        if 'BODY.PEEK[]<0.' in what:
-            self.commands.append(('fetch', ids, what))
-            return 'OK', [(b'2 (FLAGS (\\Flagged) BODY[]<0> {80}', full), b')']
-        return original(self, ids, what)
+        self.commands.append(('fetch', ids, what))
+        return 'OK', [(b'1 (FLAGS (\\Seen) BODY[]<0> {80}', second), b')',
+                      (b'2 (FLAGS (\\Flagged) BODY[]<0> {80}', first), b')']
     monkeypatch.setattr(FakeImap, 'fetch', fetch)
     data = run({**GMAIL, 'display': 'preview'})['data']
-    first, second = data['messages']
-    assert first['expanded'] and first['paragraphs'] == ['See you at 8.', 'J.']
-    assert 'expanded' not in second and 'body' not in second
-    assert ('fetch', '2', '(FLAGS BODY.PEEK[]<0.65536>)') in FakeImap.instances[0].commands
-    assert 'preview' in data['timing']['steps_ms']
+    newest, older = data['messages']
+    assert newest['subject'] == 'Cafe' and newest['paragraphs'] == ['See you at 8.', 'J.'] and newest['flagged']
+    assert older['read'] and older['truncated'] and len(older['body']) <= transform.SNIPPET_CHARS + 1
+    fetches = [c for c in FakeImap.instances[0].commands if c[0] == 'fetch']
+    assert len(fetches) == 1 and fetches[0][2] == f'(FLAGS BODY.PEEK[]<0.{transform.SNIPPET_BYTES}>)'
 
 
 def test_plain_list_fetches_no_text():

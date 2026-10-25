@@ -28,6 +28,8 @@ KEEP_PREVIOUS = {'TIMEOUT', 'CONNECTION', 'PROTOCOL', 'UNEXPECTED_ERROR'}
 UNSAFE_CHARS = set('"\\\r\n\0')
 FETCH_BYTES = 64 * 1024  # latest message: only its start, the text comes before attachments
 MAX_BODY_CHARS = 3000  # more never fits a screen; keeps the plugin data small
+SNIPPET_BYTES = 16 * 1024  # List with preview: the start of every message, in one fetch
+SNIPPET_CHARS = 500  # per entry: a few lines on screen, small plugin data for up to 50 entries
 INVITE_STRUCTURE = re.compile(rb'"(text" "calendar|application" "ics)"', re.I)  # an .ics part in BODYSTRUCTURE
 INVITE_LOOKBACK = 10  # latest message: how many recent ones to check for a non-invitation
 ENCRYPTED_TYPES = {'multipart/encrypted', 'application/pkcs7-mime', 'application/x-pkcs7-mime', 'application/pgp-encrypted'}
@@ -97,6 +99,56 @@ def search_criteria(s):
             query = f'OR {query} FROM "{addr}"'
         parts.append(query)
     return ' '.join(parts) or 'ALL'
+
+
+LIST_ITEM = re.compile(r'^([-*•]\s|\d+[.)]\s)')
+WRAPPED_LINE = 50  # a line this long was most likely wrapped by the mail program; a shorter one is a real break
+SEPARATOR = re.compile(r'^[-*_=~•.\s]+$')
+EMPHASIS = re.compile(r'(?<![\w*])\*([^*\n]+?)\*(?![\w*])')
+
+
+def _blocks(body):
+    """Paragraphs as lists of lines: wrapped lines joined again, separators dropped, list items on their own line"""
+    blocks = []
+    for block in re.split(r'\n\s*\n', body):
+        lines = [line.strip() for line in block.split('\n')]
+        joined, previous = [], ''
+        for line in (line for line in lines if line and not SEPARATOR.match(line)):
+            if joined and len(previous) >= WRAPPED_LINE and not LIST_ITEM.match(line):
+                joined[-1] += ' ' + line
+            else:
+                joined.append(line)
+            previous = line
+        if joined:
+            blocks.append(joined)
+    return blocks
+
+
+def to_paragraphs(body):
+    """Plain paragraphs (snippets): *bold* markers from plain-text mail removed"""
+    return ['\n'.join(EMPHASIS.sub(r'\1', line) for line in block) for block in _blocks(body)]
+
+
+def to_markdown(body):
+    """Markdown for the message view (TRMNL's markdown_to_html): *bold* becomes **bold**, list items a
+    real list, deliberate line breaks kept as hard breaks. The markup escapes it first: no raw HTML."""
+    out = []
+    for block in _blocks(body):
+        text, items = [], []
+        for line in block:
+            if LIST_ITEM.match(line):
+                items.append('- ' + LIST_ITEM.sub('', line))
+                continue
+            if items:  # a list ends: it needs its own block
+                out.append('  \n'.join(text)) if text else None
+                out.append('\n'.join(items))
+                text, items = [], []
+            text.append(EMPHASIS.sub(r'**\1**', line))
+        if text:
+            out.append('  \n'.join(text))
+        if items:
+            out.append('\n'.join(items))
+    return '\n\n'.join(out)
 
 
 def _decode(header):
@@ -210,7 +262,7 @@ def extract_body(msg, hide_quoted=True):
     return clean_text(text, hide_quoted), attachments, False
 
 
-def parse_full_message(raw, flags, hide_quoted=True):
+def parse_full_message(raw, flags, hide_quoted=True, max_chars=MAX_BODY_CHARS):
     msg = email.message_from_bytes(raw, policy=email.policy.compat32)
     name, address = parseaddr(_decode(msg.get('From', '')))
     try:
@@ -218,8 +270,8 @@ def parse_full_message(raw, flags, hide_quoted=True):
     except (TypeError, ValueError, IndexError):
         timestamp = datetime.now(timezone.utc).isoformat()
     body, attachments, encrypted = extract_body(msg, hide_quoted)
-    truncated = len(body) > MAX_BODY_CHARS
-    body = body[:MAX_BODY_CHARS].rstrip() + ('…' if truncated else '')
+    truncated = len(body) > max_chars
+    body = body[:max_chars].rstrip() + ('…' if truncated else '')
     return {
         'sender': name or address or 'Unknown',
         'sender_email': address,
@@ -229,7 +281,8 @@ def parse_full_message(raw, flags, hide_quoted=True):
         'flagged': b'\\Flagged' in flags,
         'body': body,
         # Paragraphs for the markup's <p> elements; a single line break stays inside a paragraph
-        'paragraphs': [p.strip() for p in re.split(r'\n\s*\n', body) if p.strip()],
+        'paragraphs': to_paragraphs(body),
+        'markdown': to_markdown(body),
         'truncated': truncated,
         'has_attachments': attachments,
         'encrypted': encrypted,
@@ -320,34 +373,24 @@ def fetch_messages(s, timer):
         if not ids:
             return []
         guard()
-        what = '(FLAGS BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])' if s['hide_invites'] \
-            else '(FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])'
+        preview = s['display'] == 'preview'
+        # List with preview: the start of every message (BODY.PEEK keeps them unread); otherwise headers only
+        what = f'BODY.PEEK[]<0.{SNIPPET_BYTES}>' if preview else 'BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)]'
+        what = f"(FLAGS {'BODYSTRUCTURE ' if s['hide_invites'] else ''}{what})"
         status, data = client.fetch(b','.join(ids).decode(), what)
         if status != 'OK':
             raise MailError('PROTOCOL', 'The mail server gave an unexpected answer.')
         timer.step('fetch')
-        messages = [parse_message(part[0].split(b' ', 1)[0].decode(), part[0], part[1])
-                    for part in data if isinstance(part, tuple)
-                    and not (s['hide_invites'] and is_invitation(part[0]))]
-        messages = sorted(messages, key=lambda m: m['timestamp'], reverse=True)[:s['limit']]
-        if s['display'] == 'preview' and messages:
-            expand_first(client, messages[0], guard, s['hide_quoted'])
-            timer.step('preview')
-        return messages
+        parts = [part for part in data if isinstance(part, tuple)
+                 and not (s['hide_invites'] and is_invitation(part[0]))]
+        if preview:
+            messages = [{**parse_full_message(part[1], part[0], s['hide_quoted'], SNIPPET_CHARS),
+                         'msg_id': part[0].split(b' ', 1)[0].decode()} for part in parts]
+            timer.step('parse')
+        else:
+            messages = [parse_message(part[0].split(b' ', 1)[0].decode(), part[0], part[1]) for part in parts]
+        return sorted(messages, key=lambda m: m['timestamp'], reverse=True)[:s['limit']]
     return read_mailbox(s, timer, read)
-
-
-def expand_first(client, message, guard, hide_quoted):
-    """List with preview: the first entry also gets its text, read like the latest message"""
-    guard()
-    status, data = client.fetch(message['msg_id'], f'(FLAGS BODY.PEEK[]<0.{FETCH_BYTES}>)')
-    if status != 'OK':
-        raise MailError('PROTOCOL', 'The mail server gave an unexpected answer.')
-    part = next((p for p in data if isinstance(p, tuple)), None)
-    if part is not None:
-        full = parse_full_message(part[1], part[0], hide_quoted)
-        message.update({key: full[key] for key in ('body', 'paragraphs', 'truncated', 'has_attachments', 'encrypted')})
-        message['expanded'] = True
 
 
 def newest_non_invitation(client, ids, guard):
