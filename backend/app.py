@@ -24,9 +24,10 @@ from modules.providers.imap_provider import (
     IMAPProtocolError,
     IMAPTimeoutError
 )
-from modules.utils.cache import CacheManager
+from modules.utils.store import connect_redis
 from modules.utils.security import credential_hash, check_mail_server, client_ip
 from modules.utils.login_limit import LoginLimiter
+from modules.utils.throttle import Throttle
 
 warnings.filterwarnings('ignore', category=ResourceWarning)
 
@@ -34,8 +35,7 @@ warnings.filterwarnings('ignore', category=ResourceWarning)
 ENABLE_IP_WHITELIST = os.getenv('ENABLE_IP_WHITELIST', 'true').lower() == 'true'
 IP_REFRESH_HOURS = int(os.getenv('IP_REFRESH_HOURS', '24'))
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
-ENABLE_CACHE = os.getenv('ENABLE_CACHE', 'true').lower() == 'true'
-CACHE_TTL_SECONDS = int(os.getenv('CACHE_TTL_SECONDS', '300'))
+USE_REDIS = os.getenv('USE_REDIS', 'true').lower() == 'true'
 REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
 REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
 REDIS_DB = int(os.getenv('REDIS_DB', '0'))
@@ -69,8 +69,8 @@ imap_provider = IMAPProvider(
     login_timeout=IMAP_LOGIN_TIMEOUT,
     fetch_timeout=IMAP_FETCH_TIMEOUT
 )
-cache_manager = None  # Initialized in startup
 login_limiter = LoginLimiter()  # Redis-backed after startup
+throttle = Throttle()  # Redis-backed after startup
 
 
 def mask_email(email_addr):
@@ -284,23 +284,15 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
 
     credential = credential_hash(password)
     account = LoginLimiter.account_key(server, username)
-    cache_params = {
-        'provider': 'imap', 'server': server, 'port': port, 'username': username,
-        'auth_type': 'password',
-        'credential': credential,
-        'folder': folder, 'limit': limit, 'unread_only': unread_only,
-        'flagged_only': flagged_only, 'gmail_category': gmail_category,
-        'from_emails': sorted(from_emails) if from_emails else []
-    }
-    cache_key = cache_manager.generate_key('imap', cache_params)
-
-    cached_response = cache_manager.get(cache_key)
-    if cached_response:
-        logger.info(f"[{request_id}] 💾 Cache HIT")
-        return cached_response
+    if not throttle.acquire(account, credential):
+        logger.info(f"[{request_id}] ⏸️  Throttled {masked_username}")
+        return {'success': False, 'throttled': True, 'code': 'THROTTLED',
+                'error': 'Refreshing too often',
+                'message': 'Mail is read at most once every 5 minutes. Try again in a few minutes.'}
 
     limited = login_limiter.blocked(account, credential)
     if limited:
+        throttle.release(account, credential)
         logger.warning(f"[{request_id}] 🚫 Login limit for {masked_username}")
         return {'success': False, 'error': 'Too Many Failed Logins', 'message': limited,
                 'code': 'TOO_MANY_FAILURES'}
@@ -322,26 +314,13 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
             response_data['gmail_category'] = gmail_category
         if from_emails:
             response_data['from_emails'] = from_emails
-        cache_manager.set(cache_key, response_data)
         login_limiter.succeeded(account, credential)
         return response_data
 
-    except IMAPAuthenticationError as e:
+    except IMAPAuthenticationError:
+        throttle.release(account, credential)
         login_limiter.failed(account)
-        cached_fallback = cache_manager.get(cache_key)
-        if cached_fallback:
-            logger.warning(f"[{request_id}] 🔒 Auth failed ({auth_method}), returning stale cache")
-            cached_fallback.update({
-                'success': False, 'cached': True,
-                'cache_warning': 'Authentication failed - returning cached data',
-                'error': {
-                    'message': format_auth_error(username),
-                    'type': 'AUTH_FAILED', 'auth_method': auth_method,
-                    'occurred_at': datetime.now().isoformat()
-                }
-            })
-            return cached_fallback
-        logger.warning(f"[{request_id}] 🔒 Auth failed ({auth_method}) for {masked_username} (no cache)")
+        logger.warning(f"[{request_id}] 🔒 Auth failed ({auth_method}) for {masked_username}")
         return {
             'success': False, 'error': 'Authentication Failed',
             'message': format_auth_error(username),
@@ -349,21 +328,9 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
         }
 
     except (IMAPTimeoutError, IMAPConnectionError, IMAPProtocolError) as e:
+        throttle.release(account, credential)
         error_type = type(e).__name__
-        cached_fallback = cache_manager.get(cache_key)
-        if cached_fallback:
-            logger.warning(f"[{request_id}] ⚠️  {error_type}, returning stale cache")
-            cached_fallback.update({
-                'success': False, 'cached': True,
-                'cache_warning': f'{error_type} - returning cached data',
-                'error': {
-                    'message': public_error_message(e),
-                    'type': error_type.replace('IMAP', '').replace('Error', '').upper(),
-                    'occurred_at': datetime.now().isoformat()
-                }
-            })
-            return cached_fallback
-        logger.error(f"[{request_id}] ✗ {error_type}: {e} (no cache)")
+        logger.error(f"[{request_id}] ✗ {error_type}: {e}")
         return {
             'success': False,
             'error': error_type.replace('IMAP', '').replace('Error', ''),
@@ -372,15 +339,7 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
         }
 
     except Exception as e:
-        cached_fallback = cache_manager.get(cache_key)
-        if cached_fallback:
-            logger.warning(f"[{request_id}] ⚠️  Unexpected error, returning stale cache")
-            cached_fallback.update({
-                'success': False, 'cached': True,
-                'error': {'message': public_error_message(e), 'type': 'UNEXPECTED_ERROR',
-                          'occurred_at': datetime.now().isoformat()}
-            })
-            return cached_fallback
+        throttle.release(account, credential)
         logger.error(f"[{request_id}] ✗ Unexpected error: {e}")
         return {'success': False, 'error': 'Unexpected Error', 'message': public_error_message(e),
                 'code': 'UNEXPECTED_ERROR'}
@@ -456,12 +415,12 @@ logger.info("=" * 60)
 logger.info("🚀 Email Reader")
 logger.info(f"   Python {sys.version.split()[0]}")
 logger.info(f"   Provider: IMAP (app password)")
-logger.info(f"   Features: Caching, IP Whitelist")
+logger.info(f"   Features: IP Whitelist, login limit, throttle")
 logger.info("=" * 60)
 
 
 async def startup_init():
-    global TRMNL_IPS, last_ip_refresh, cache_manager, login_limiter
+    global TRMNL_IPS, last_ip_refresh, login_limiter, throttle
 
     if ENABLE_IP_WHITELIST:
         ips = await fetch_trmnl_ips()
@@ -472,19 +431,12 @@ async def startup_init():
     else:
         logger.warning("⚠️  IP whitelist DISABLED")
 
-    cache_manager = CacheManager(
-        redis_host=REDIS_HOST, redis_port=REDIS_PORT, redis_db=REDIS_DB,
-        ttl_seconds=CACHE_TTL_SECONDS, enabled=ENABLE_CACHE
-    )
-    if cache_manager.redis_client:
-        login_limiter = LoginLimiter(cache_manager.redis_client)
+    redis_client = connect_redis(REDIS_HOST, REDIS_PORT, REDIS_DB) if USE_REDIS else None
+    if redis_client:
+        login_limiter = LoginLimiter(redis_client)
+        throttle = Throttle(redis_client)
     else:
-        logger.warning("⚠️  Login limit per worker only (no Redis)")
-
-    if ENABLE_CACHE:
-        logger.info(f"💾 Cache enabled (TTL: {CACHE_TTL_SECONDS}s)")
-    else:
-        logger.info("💾 Cache disabled")
+        logger.warning("⚠️  Login limit and throttle per worker only (no Redis)")
 
     logger.info("=" * 60)
     logger.info("✓ Ready to accept requests")

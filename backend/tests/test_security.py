@@ -5,27 +5,14 @@ import pytest
 
 import app as backend
 from modules.providers.imap_provider import IMAPAuthenticationError
-from modules.utils.cache import CacheManager
 
 MESSAGES = [{'subject': 'private', 'from': 'a@example.com'}]
 
 
-class MemoryCache(CacheManager):
-    def __init__(self):
-        super().__init__('unused', 0, 0, ttl_seconds=300, enabled=False)
-        self.store = {}
-
-    def get(self, cache_key):
-        return dict(self.store[cache_key]) if cache_key in self.store else None
-
-    def set(self, cache_key, data):
-        self.store[cache_key] = dict(data)
-        return True
-
 
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.setattr(backend, 'cache_manager', MemoryCache())
+    monkeypatch.setattr(backend, 'throttle', backend.Throttle())
     monkeypatch.setattr(backend, 'login_limiter', backend.LoginLimiter())
     monkeypatch.setattr(backend, 'ENABLE_IP_WHITELIST', False)
     public = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('142.250.27.108', 993))]
@@ -50,7 +37,7 @@ def test_wrong_password_never_gets_cached_mail(client, monkeypatch):
     assert stolen['success'] is False
 
 
-def test_same_password_still_uses_cache(client, monkeypatch):
+def test_second_fetch_within_window_is_throttled(client, monkeypatch):
     calls = []
 
     async def fetch(**kw):
@@ -58,8 +45,30 @@ def test_same_password_still_uses_cache(client, monkeypatch):
         return MESSAGES
     monkeypatch.setattr(backend.imap_provider, 'fetch_messages', fetch)
     client.post('/messages', json=body())
-    client.post('/messages', json=body())
+    second = client.post('/messages', json=body()).get_json()
     assert len(calls) == 1
+    assert second['code'] == 'THROTTLED' and 'messages' not in second
+
+
+def test_no_mail_data_is_stored(client, monkeypatch):
+    async def fetch(**kw):
+        return MESSAGES
+    monkeypatch.setattr(backend.imap_provider, 'fetch_messages', fetch)
+    client.post('/messages', json=body())
+    stored = str(backend.throttle.store.values) + str(backend.login_limiter.store.values)
+    assert 'private' not in stored and 'a@example.com' not in stored and 'victim' not in stored
+
+
+def test_failed_fetch_can_retry_at_once(client, monkeypatch):
+    calls = []
+
+    async def fetch(**kw):
+        calls.append(1)
+        raise backend.IMAPConnectionError('down')
+    monkeypatch.setattr(backend.imap_provider, 'fetch_messages', fetch)
+    client.post('/messages', json=body())
+    client.post('/messages', json=body())
+    assert len(calls) == 2
 
 
 def test_async_route_and_get_are_gone(client):

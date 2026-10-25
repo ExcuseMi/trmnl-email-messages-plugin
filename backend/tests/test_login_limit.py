@@ -1,6 +1,6 @@
 import app as backend
 from modules.providers.imap_provider import IMAPAuthenticationError
-from modules.utils import login_limit
+from modules.utils import login_limit, store
 from test_security import client, body, MESSAGES  # noqa: F401  (fixture and helpers)
 
 
@@ -30,7 +30,7 @@ def test_known_good_password_is_never_locked_out(client, monkeypatch):  # noqa: 
     assert client.post('/messages', json=body()).get_json()['success'] is True
     for i in range(20):
         client.post('/messages', json=body(password=f'guess{i}'))
-    backend.cache_manager.store.clear()  # force a real login, no cache
+    backend.throttle.store.values.clear()  # past the 5-minute window
     assert client.post('/messages', json=body()).get_json()['success'] is True
 
 
@@ -43,7 +43,7 @@ def test_spraying_many_accounts_hits_the_global_limit(client, monkeypatch):  # n
 
 def test_limit_expires(monkeypatch):
     now = [1000.0]
-    monkeypatch.setattr(login_limit.time, 'time', lambda: now[0])
+    monkeypatch.setattr(store.time, 'time', lambda: now[0])
     limiter = login_limit.LoginLimiter()
     for _ in range(login_limit.ACCOUNT_MAX_FAILURES):
         limiter.failed('a')
