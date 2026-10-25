@@ -15,6 +15,7 @@ import sys
 import json
 import uuid
 import warnings
+from typing import Optional
 
 from modules.providers.imap_provider import (
     IMAPProvider,
@@ -169,6 +170,31 @@ def require_whitelisted_ip(f):
     return decorated_function
 
 
+def public_error_message(e):
+    """One fixed text per kind, so error details never act as a probe of other hosts"""
+    if isinstance(e, IMAPConnectionError):
+        return 'Could not connect to the mail server. Check the server name and port.'
+    if isinstance(e, IMAPTimeoutError):
+        return 'The mail server took too long to answer.'
+    return str(e)
+
+
+def validate_params(data) -> Optional[str]:
+    """Return an error message for a malformed request, else None"""
+    for key in ('server', 'username', 'password', 'oauth_access_token', 'folder', 'gmail_category'):
+        if data.get(key) is not None and not isinstance(data[key], str):
+            return f'{key} must be a string'
+    for key in ('port', 'limit'):
+        if data.get(key) is not None and (isinstance(data[key], bool) or not isinstance(data[key], int)):
+            return f'{key} must be a number'
+    from_emails = data.get('from_emails')
+    if from_emails is not None and not isinstance(from_emails, (str, list)):
+        return 'from_emails must be a string or a list'
+    if isinstance(from_emails, list) and not all(isinstance(e, str) for e in from_emails):
+        return 'from_emails must hold strings'
+    return None
+
+
 def load_mock_data():
     try:
         with open('mock-data.json', 'r') as f:
@@ -210,11 +236,9 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
     username = params.get('username')
     password = params.get('password')
     oauth_token = params.get('oauth_access_token')
-    port = int(params.get('port', 993))
+    port = params.get('port', 993)
     folder = params.get('folder', 'INBOX')
-    limit = int(params.get('limit', 10))
-    if limit > MAX_MESSAGES_LIMIT:
-        limit = MAX_MESSAGES_LIMIT
+    limit = min(max(params.get('limit', 10), 1), MAX_MESSAGES_LIMIT)
 
     gmail_category = params.get('gmail_category')
 
@@ -251,7 +275,7 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
         logger.info(f"[{request_id}] 🎭 Returning mock data")
         return load_mock_data() or {'error': 'Failed to load mock data'}
 
-    server_error = check_mail_server(server, port)
+    server_error = await check_mail_server(server, port)
     if server_error:
         logger.warning(f"[{request_id}] 🚫 {server_error}")
         return {'success': False, 'error': 'Invalid Server', 'message': server_error, 'code': 'INVALID_SERVER'}
@@ -322,7 +346,7 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
                 'success': False, 'cached': True,
                 'cache_warning': f'{error_type} - returning cached data',
                 'error': {
-                    'message': str(e),
+                    'message': public_error_message(e),
                     'type': error_type.replace('IMAP', '').replace('Error', '').upper(),
                     'occurred_at': datetime.now().isoformat()
                 }
@@ -332,7 +356,7 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
         return {
             'success': False,
             'error': error_type.replace('IMAP', '').replace('Error', ''),
-            'message': str(e),
+            'message': public_error_message(e),
             'code': error_type.replace('IMAP', '').replace('Error', '').upper()
         }
 
@@ -372,6 +396,9 @@ def register_routes(app):
     async def get_messages():
         request_id = str(uuid.uuid4())[:8]
         data = _extract_params(request)
+        invalid = validate_params(data)
+        if invalid:
+            return jsonify({'error': 'Invalid parameters', 'message': invalid}), 400
 
         server = data.get('server')
         username = data.get('username')

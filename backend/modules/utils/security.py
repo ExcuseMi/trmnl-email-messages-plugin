@@ -1,10 +1,13 @@
 """
 Request safety checks: credential-bound cache keys, mail server address checks, client IP
 """
+import asyncio
 import hashlib
 import ipaddress
 import socket
 from typing import Optional
+
+DNS_TIMEOUT_SECONDS = 5
 
 
 def credential_hash(password: Optional[str], oauth_token: Optional[str]) -> str:
@@ -13,7 +16,11 @@ def credential_hash(password: Optional[str], oauth_token: Optional[str]) -> str:
     return hashlib.sha256(secret.encode()).hexdigest()
 
 
-def check_mail_server(server: str, port) -> Optional[str]:
+def is_public_address(address: str) -> bool:
+    return ipaddress.ip_address(address.split('%')[0]).is_global
+
+
+async def check_mail_server(server: str, port) -> Optional[str]:
     """Return an error message when the server must not be contacted, else None"""
     try:
         port = int(port)
@@ -24,13 +31,13 @@ def check_mail_server(server: str, port) -> Optional[str]:
     if not server or not isinstance(server, str):
         return 'Invalid server'
     try:
-        infos = socket.getaddrinfo(server, port, proto=socket.IPPROTO_TCP)
-    except (socket.gaierror, UnicodeError):
+        infos = await asyncio.wait_for(
+            asyncio.get_running_loop().getaddrinfo(server, port, proto=socket.IPPROTO_TCP),
+            timeout=DNS_TIMEOUT_SECONDS)
+    except (socket.gaierror, UnicodeError, asyncio.TimeoutError):
         return 'Server not found'
-    for info in infos:
-        address = ipaddress.ip_address(info[4][0].split('%')[0])
-        if not address.is_global:
-            return 'Server address not allowed'
+    if not all(is_public_address(info[4][0]) for info in infos):
+        return 'Server address not allowed'
     return None
 
 

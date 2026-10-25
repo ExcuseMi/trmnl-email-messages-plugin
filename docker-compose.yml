@@ -2,7 +2,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # Cached mail stays in memory only (privacy policy): no snapshots, no append log, no volume
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save "" --appendonly no
     networks:
       - imap-network
     healthcheck:
@@ -10,8 +11,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-    volumes:
-      - redis_data:/data
 
   imap-reader:
     build:
@@ -53,6 +52,3 @@ services:
 networks:
   imap-network:
     driver: bridge
-
-volumes:
-  redis_data:

@@ -12,6 +12,8 @@ import ssl
 from typing import List, Dict, Any, Optional
 import logging
 
+from modules.utils.security import is_public_address
+
 logger = logging.getLogger(__name__)
 
 
@@ -111,6 +113,11 @@ class IMAPProvider:
                 )
             except asyncio.TimeoutError:
                 raise IMAPConnectionError(f'Connection timeout to {server}:{port}')
+
+            # The name may resolve differently now than when it was checked (DNS rebinding)
+            peer = client.protocol.transport.get_extra_info('peername') if client.protocol.transport else None
+            if not peer or not is_public_address(peer[0]):
+                raise IMAPConnectionError('Server address not allowed')
 
             # Login - OAuth or Password
             try:
