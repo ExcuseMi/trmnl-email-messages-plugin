@@ -63,7 +63,7 @@ def _settings(values):
         'flagged_only': values.get('flagged_only') == 'yes',
         'gmail_category': (values.get('gmail_category') or '') if provider == 'gmail' else '',
         'from_emails': [e.strip() for e in from_emails if e and e.strip()],
-        'display': 'latest' if values.get('display') == 'latest' else 'list',
+        'display': values.get('display') if values.get('display') in ('latest', 'preview') else 'list',
         'hide_quoted': values.get('hide_quoted', 'yes') != 'no',
         'hide_invites': values.get('hide_invitations') == 'yes',
     }
@@ -329,8 +329,25 @@ def fetch_messages(s, timer):
         messages = [parse_message(part[0].split(b' ', 1)[0].decode(), part[0], part[1])
                     for part in data if isinstance(part, tuple)
                     and not (s['hide_invites'] and is_invitation(part[0]))]
-        return sorted(messages, key=lambda m: m['timestamp'], reverse=True)[:s['limit']]
+        messages = sorted(messages, key=lambda m: m['timestamp'], reverse=True)[:s['limit']]
+        if s['display'] == 'preview' and messages:
+            expand_first(client, messages[0], guard, s['hide_quoted'])
+            timer.step('preview')
+        return messages
     return read_mailbox(s, timer, read)
+
+
+def expand_first(client, message, guard, hide_quoted):
+    """List with preview: the first entry also gets its text, read like the latest message"""
+    guard()
+    status, data = client.fetch(message['msg_id'], f'(FLAGS BODY.PEEK[]<0.{FETCH_BYTES}>)')
+    if status != 'OK':
+        raise MailError('PROTOCOL', 'The mail server gave an unexpected answer.')
+    part = next((p for p in data if isinstance(p, tuple)), None)
+    if part is not None:
+        full = parse_full_message(part[1], part[0], hide_quoted)
+        message.update({key: full[key] for key in ('body', 'paragraphs', 'truncated', 'has_attachments', 'encrypted')})
+        message['expanded'] = True
 
 
 def newest_non_invitation(client, ids, guard):

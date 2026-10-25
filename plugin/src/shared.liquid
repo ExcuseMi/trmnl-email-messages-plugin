@@ -116,7 +116,7 @@
       {% endif %}
 
       {% comment %} Email item {% endcomment %}
-      <div class="item">
+      <div class="item{% if message.expanded %} item--emphasis-2{% endif %}">
         <div class="meta w--10 rounded">
           {% if message.flagged %}
           <svg class="image-stroke w--8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -188,6 +188,15 @@
               {% endif %}
             </span>
           </div>
+          {% if message.expanded %}
+          {% comment %} List with preview: the first entry shows its text, clamped per view {% endcomment %}
+          {% if message.encrypted %}
+          <span class="description mt--1">This message is encrypted and can't be shown.</span>
+          {% elsif message.paragraphs.size > 0 %}
+          {% comment %} Paragraphs on new lines without blank lines between them: more text fits {% endcomment %}
+          <span class="description mt--1" data-clamp="{{ preview_lines | default: 6 }}">{% for paragraph in message.paragraphs %}{{ paragraph | escape | newline_to_br }}{% unless forloop.last %}<br>{% endunless %}{% endfor %}</span>
+          {% endif %}
+          {% endif %}
         </div>
       </div>
       {% endfor %}

@@ -200,3 +200,27 @@ def test_invitations_hidden_when_asked(monkeypatch):
     assert [m['subject'] for m in data['messages']] == ['Café tonight', 'Older']
     fetch = [c for c in FakeImap.instances[0].commands if c[0] == 'fetch'][0]
     assert 'BODYSTRUCTURE' in fetch[2]
+
+
+def test_preview_expands_the_first_entry_with_its_text(monkeypatch):
+    full = (b'From: =?utf-8?q?J=C3=BCrgen?= <jurgen@example.com>\r\nSubject: Cafe\r\n'
+            b'Date: Sat, 25 Oct 2026 09:00:00 +0000\r\nContent-Type: text/plain\r\n\r\nSee you at 8.\r\n\r\nJ.\r\n')
+    original = FakeImap.fetch
+
+    def fetch(self, ids, what):
+        if 'BODY.PEEK[]<0.' in what:
+            self.commands.append(('fetch', ids, what))
+            return 'OK', [(b'2 (FLAGS (\\Flagged) BODY[]<0> {80}', full), b')']
+        return original(self, ids, what)
+    monkeypatch.setattr(FakeImap, 'fetch', fetch)
+    data = run({**GMAIL, 'display': 'preview'})['data']
+    first, second = data['messages']
+    assert first['expanded'] and first['paragraphs'] == ['See you at 8.', 'J.']
+    assert 'expanded' not in second and 'body' not in second
+    assert ('fetch', '2', '(FLAGS BODY.PEEK[]<0.65536>)') in FakeImap.instances[0].commands
+    assert 'preview' in data['timing']['steps_ms']
+
+
+def test_plain_list_fetches_no_text():
+    run(GMAIL)
+    assert not any('BODY.PEEK[]<0.' in c[2] for c in FakeImap.instances[0].commands if c[0] == 'fetch')

@@ -30,9 +30,10 @@ custom_fields:
 - keyname: display
   field_type: select
   name: Display
-  description: A list of your latest messages, or the latest message with its text.
+  description: A list of your latest messages, the list with the newest one opened, or only the latest message with its text.
   options:
   - Message list: list
+  - List with preview (text under the newest): preview
   - Latest message (with text): latest
   default: list
   optional: true
@@ -285,8 +286,7 @@ custom_fields:
 - keyname: hide_invitations
   field_type: select
   name: Hide Calendar Invitations
-  description: Leave out meeting invitations and updates (mails with a calendar .ics
-    part).
+  description: Leave out meeting invitations and updates (mails with a calendar .ics part).
   options:
   - 'No': 'no'
   - 'Yes': 'yes'
@@ -295,7 +295,7 @@ custom_fields:
 - keyname: hide_quoted
   field_type: select
   name: Hide Quoted Replies
-  description: 'Only for Latest message: leave out quoted earlier messages and signatures.'
+  description: 'For the message text (List with preview, Latest message): leave out quoted earlier messages and signatures.'
   options:
   - 'Yes': 'yes'
   - 'No': 'no'
