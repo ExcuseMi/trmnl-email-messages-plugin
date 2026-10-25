@@ -24,6 +24,7 @@ from modules.providers.imap_provider import (
     IMAPTimeoutError
 )
 from modules.utils.cache import CacheManager
+from modules.utils.security import credential_hash, check_mail_server, client_ip
 
 warnings.filterwarnings('ignore', category=ResourceWarning)
 
@@ -50,6 +51,8 @@ logger = logging.getLogger(__name__)
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
 logging.getLogger('hypercorn.access').setLevel(logging.ERROR)
 logging.getLogger('hypercorn.error').setLevel(logging.WARNING)
+# Its debug output holds the IMAP LOGIN line with the password: never below WARNING
+logging.getLogger('aioimaplib').setLevel(logging.WARNING)
 
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
@@ -148,13 +151,7 @@ def start_ip_refresh_worker():
 
 
 def get_client_ip():
-    if request.headers.get('CF-Connecting-IP'):
-        return request.headers.get('CF-Connecting-IP').strip()
-    if request.headers.get('X-Forwarded-For'):
-        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
-    if request.headers.get('X-Real-IP'):
-        return request.headers.get('X-Real-IP').strip()
-    return request.remote_addr
+    return client_ip(request.headers, request.remote_addr)
 
 
 def require_whitelisted_ip(f):
@@ -254,9 +251,15 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
         logger.info(f"[{request_id}] 🎭 Returning mock data")
         return load_mock_data() or {'error': 'Failed to load mock data'}
 
+    server_error = check_mail_server(server, port)
+    if server_error:
+        logger.warning(f"[{request_id}] 🚫 {server_error}")
+        return {'success': False, 'error': 'Invalid Server', 'message': server_error, 'code': 'INVALID_SERVER'}
+
     cache_params = {
-        'provider': 'imap', 'server': server, 'username': username,
+        'provider': 'imap', 'server': server, 'port': port, 'username': username,
         'auth_type': 'oauth' if oauth_token else 'password',
+        'credential': credential_hash(password, oauth_token),
         'folder': folder, 'limit': limit, 'unread_only': unread_only,
         'flagged_only': flagged_only, 'gmail_category': gmail_category,
         'from_emails': sorted(from_emails) if from_emails else []
@@ -347,48 +350,8 @@ async def _fetch_messages(params: dict, request_id: str) -> dict:
         return {'success': False, 'error': 'Unexpected Error', 'message': str(e), 'code': 'UNEXPECTED_ERROR'}
 
 
-# ---------------------------------------------------------------------------
-# Async polling helpers
-# ---------------------------------------------------------------------------
-
-async def _post_callback(callback_url: str, data: dict, request_id: str):
-    msg_count = len(data.get('messages', [])) if isinstance(data.get('messages'), list) else '?'
-    success = data.get('success', False)
-    logger.debug(f"[{request_id}] → Callback payload: success={success}, messages={msg_count}, keys={list(data.keys())}")
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(callback_url, json=data)
-            logger.info(f"[{request_id}] ✓ Callback → {resp.status_code} ({callback_url})")
-            if resp.status_code >= 400:
-                logger.warning(f"[{request_id}] ⚠️  Callback error body: {resp.text[:500]}")
-    except Exception as e:
-        logger.error(f"[{request_id}] ✗ Callback POST failed: {e}")
-
-
-def _run_background(fetch_fn, callback_url: str, request_id: str):
-    def _worker():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(fetch_fn())
-            loop.run_until_complete(_post_callback(callback_url, result, request_id))
-        except Exception as e:
-            logger.error(f"[{request_id}] ✗ Background task error: {e}")
-            loop.run_until_complete(_post_callback(
-                callback_url,
-                {'success': False, 'error': str(e), 'code': 'BACKGROUND_ERROR'},
-                request_id
-            ))
-        finally:
-            loop.close()
-
-    threading.Thread(target=_worker, daemon=True, name=f'async-cb-{request_id}').start()
-
-
 def _extract_params(req) -> dict:
-    if req.method == 'POST':
-        return dict(req.json or {})
-    return req.args.to_dict()
+    return dict(req.get_json(silent=True) or {})
 
 
 # ---------------------------------------------------------------------------
@@ -403,16 +366,12 @@ def create_app():
 
 def register_routes(app):
 
-    @app.route('/messages', methods=['GET', 'POST'])
-    @app.route('/imap/messages', methods=['GET', 'POST'])
+    @app.route('/messages', methods=['POST'])
+    @app.route('/imap/messages', methods=['POST'])
     @require_whitelisted_ip
     async def get_messages():
         request_id = str(uuid.uuid4())[:8]
-
-        if request.method == 'POST':
-            data = request.json
-        else:
-            data = request.args
+        data = _extract_params(request)
 
         server = data.get('server')
         username = data.get('username')
@@ -425,43 +384,7 @@ def register_routes(app):
                 'required': ['server', 'username', 'password OR oauth_access_token']
             }), 400
 
-        params = _extract_params(request)
-        return jsonify(await _fetch_messages(params, request_id))
-
-    @app.route('/async/messages', methods=['GET', 'POST'])
-    @require_whitelisted_ip
-    async def get_messages_async():
-        request_id = str(uuid.uuid4())[:8]
-        params = _extract_params(request)
-
-        safe_params = {k: ('***' if k in ('password', 'oauth_access_token') else v) for k, v in params.items()}
-        logger.debug(f"[{request_id}] ← Incoming async request: {safe_params}")
-        logger.debug(f"[{request_id}] ← Headers: {dict(request.headers)}")
-
-        server = params.get('server')
-        username = params.get('username')
-        password = params.get('password')
-        oauth_token = params.get('oauth_access_token')
-
-        if not all([server, username]) or not (password or oauth_token):
-            return jsonify({
-                'error': 'Missing required parameters',
-                'required': ['server', 'username', 'password OR oauth_access_token']
-            }), 400
-
-        callback_url = params.pop('callback_url', None)
-        if not callback_url:
-            return jsonify({
-                'error': 'Missing callback_url',
-                'message': 'TRMNL must provide callback_url in the request'
-            }), 400
-
-        _run_background(
-            lambda p=params, r=request_id: _fetch_messages(p, r),
-            callback_url, request_id
-        )
-        logger.info(f"[{request_id}] ⏳ Async polling → background task started, callback: {callback_url}")
-        return jsonify({'status': 'accepted', 'request_id': request_id}), 202
+        return jsonify(await _fetch_messages(data, request_id))
 
     @app.route('/health')
     def health():
@@ -475,7 +398,7 @@ def register_routes(app):
             'status': 'healthy',
             'service': 'email-reader',
             'providers': ['imap'],
-            'features': ['password_auth', 'oauth2_auth', 'async_polling'],
+            'features': ['password_auth', 'oauth2_auth'],
             'python': sys.version.split()[0],
             'timestamp': datetime.now().isoformat()
         }
@@ -501,7 +424,7 @@ logger.info("=" * 60)
 logger.info("🚀 Email Reader")
 logger.info(f"   Python {sys.version.split()[0]}")
 logger.info(f"   Provider: IMAP (password/OAuth)")
-logger.info(f"   Features: Caching, IP Whitelist, Async Polling")
+logger.info(f"   Features: Caching, IP Whitelist")
 logger.info("=" * 60)
 
 

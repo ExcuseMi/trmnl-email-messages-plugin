@@ -212,3 +212,4 @@ __marimo__/
 /.idea/trmnl-email-plugin.iml
 /.idea/vcs.xml
 .idea/trmnl-email-messages-plugin.iml
+.venv/
