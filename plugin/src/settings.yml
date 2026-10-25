@@ -10,7 +10,7 @@ refresh_interval_floor:
 polling_url:
 polling_headers:
 polling_body:
-id: 198482
+id: 519097
 oauth_enabled: 'false'
 oauth_pkce_enabled: 'no'
 custom_fields:
@@ -374,6 +374,6 @@ custom_fields:
   - Numeric (12/18/24): numeric
   - ISO Date (2024-12-18): iso
   help_text: Choose based on your display size and personal preference.
-name: Email Messages (IMAP)
+name: Email Messages (IMAP) Test
 description:
 refresh_interval: 1440
