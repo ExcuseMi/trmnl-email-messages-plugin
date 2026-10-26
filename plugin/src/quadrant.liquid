@@ -1,1 +1,8 @@
-{% render "main": data:data, trmnl:trmnl, columns:1, show_instance: "no" %}
+{% if data.display == "latest" or data.display == "combined" %}
+{% comment %} Too narrow for two panels: the combined view shows the latest message with its rows {% endcomment %}
+{% assign others = data.others | default: data.messages %}
+{% render "latest_message": data:data, trmnl:trmnl, others: others, title_lines: 1, subject_size: "title--base lg:title--large", large_chars: 30, medium_chars: 70 %}
+{% render "title_bar": data:data, trmnl:trmnl, show_instance: "no" %}
+{% else %}
+{% render "main": data:data, trmnl:trmnl, columns:1, show_instance: "no", preview_lines: 3 %}
+{% endif %}

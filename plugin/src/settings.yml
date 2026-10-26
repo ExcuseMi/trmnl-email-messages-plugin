@@ -2,7 +2,164 @@
 strategy: static
 no_screen_padding: 'no'
 dark_mode: 'no'
-static_data: "{}"
+static_data: |-
+  {
+   "demo_inbox": {
+    "address": "dwight.schrute@dundermifflin.com",
+    "messages": [
+     {
+      "hours_ago": 0,
+      "sender": "Jim Halpert",
+      "sender_email": "jhalpert@dundermifflin.com",
+      "subject": "RE: Congratulations on your promotion to Regional Manager!",
+      "read": false,
+      "flagged": false,
+      "personal": "only",
+      "text": "Dwight,\n\nCongratulations on the *big promotion*. Before you move into the corner office, a few things:\n\n- your desk is now in the vending machine\n- the beets in the fridge are labelled \"Jim\"\n\nMichael wants to see you at 3. Bring the nameplate.\n\nJim"
+     },
+     {
+      "hours_ago": 2,
+      "sender": "Michael Scott",
+      "sender_email": "mscott@dundermifflin.com",
+      "subject": "Dwight, we need to talk about the 'promotion'",
+      "read": false,
+      "flagged": true,
+      "personal": "only",
+      "text": "Dwight,\n\nThere may have been a misunderstanding. The memo said \"Assistant TO the Regional Manager\". Please return the stapler with your name engraved on it.\n\nMichael"
+     },
+     {
+      "hours_ago": 4,
+      "sender": "Pam Beesly",
+      "sender_email": "pbeesly@dundermifflin.com",
+      "subject": "FYI: There is no Executive Beet Farm Division",
+      "read": true,
+      "flagged": false,
+      "personal": "others",
+      "text": "Hi Dwight,\n\nJust checked with corporate. The division does not exist, and neither does the budget for it.\n\nPam"
+     },
+     {
+      "hours_ago": 24,
+      "sender": "Schrute Farms Online",
+      "sender_email": "orders@schrutefarms.com",
+      "subject": "Your order of 500 'Assistant Regional Manager' business cards has shipped",
+      "read": true,
+      "flagged": true,
+      "personal": null,
+      "text": "Your order is on its way. Expected delivery: tomorrow, by horse.\n\nThank you for shopping at Schrute Farms."
+     },
+     {
+      "hours_ago": 27,
+      "sender": "Office Depot",
+      "sender_email": "noreply@officedepot.com",
+      "subject": "Confirmation: Custom nameplate 'Dwight K. Schrute - ARM'",
+      "read": true,
+      "flagged": false,
+      "personal": null,
+      "text": "Thank you for your order. Your custom nameplate will be engraved and shipped within 3 business days."
+     },
+     {
+      "hours_ago": 30,
+      "sender": "HR Department (Toby)",
+      "sender_email": "tflenderson@dundermifflin.com",
+      "subject": "RE: Request for corner office with skylight",
+      "read": true,
+      "flagged": false,
+      "personal": "only",
+      "text": "Dwight,\n\nThe building has one floor and no skylights. Your request has been filed.\n\nToby"
+     },
+     {
+      "hours_ago": 48,
+      "sender": "Corporate (David Wallace)",
+      "sender_email": "dwallace@dundermifflin.com",
+      "subject": "RE: New Executive Position Inquiry",
+      "read": true,
+      "flagged": false,
+      "personal": "only",
+      "text": "Dwight,\n\nThank you for your interest. There are currently no openings for \"Supreme Executive of Sales\".\n\nDavid"
+     },
+     {
+      "hours_ago": 50,
+      "sender": "LinkedIn",
+      "sender_email": "notifications@linkedin.com",
+      "subject": "Jim Halpert updated his job title to 'Master Prankster'",
+      "read": true,
+      "flagged": false,
+      "personal": null,
+      "text": "Jim Halpert has a new position. Congratulate him on his new role."
+     },
+     {
+      "hours_ago": 72,
+      "sender": "DunderMifflin Corporate",
+      "sender_email": "no-reply@dundermifflin.com",
+      "subject": "CONFIDENTIAL: You've been selected for executive training",
+      "read": true,
+      "flagged": true,
+      "personal": "others",
+      "text": "You have been selected for the executive training program. Report to the conference room on Monday at 9."
+     },
+     {
+      "hours_ago": 77,
+      "sender": "Angela Martin",
+      "sender_email": "amartin@dundermifflin.com",
+      "subject": "Why is there a red stapler in jello on my desk?",
+      "read": true,
+      "flagged": false,
+      "personal": "only",
+      "text": "Dwight,\n\nThis is unacceptable. I expect it removed before the cats see it.\n\nAngela"
+     },
+     {
+      "hours_ago": 96,
+      "sender": "Stanley Hudson",
+      "sender_email": "shudson@dundermifflin.com",
+      "subject": "RE: Stop asking about my crossword puzzle answers",
+      "read": true,
+      "flagged": false,
+      "personal": "only",
+      "text": "No."
+     },
+     {
+      "hours_ago": 120,
+      "sender": "Kevin Malone",
+      "sender_email": "kmalone@dundermifflin.com",
+      "subject": "The vending machine ate my dollar again",
+      "read": true,
+      "flagged": false,
+      "personal": "others",
+      "text": "Can you fix it? You said you know how machines think.\n\nKevin"
+     },
+     {
+      "hours_ago": 144,
+      "sender": "Creed Bratton",
+      "sender_email": "definitely.not.creed@aol.com",
+      "subject": "Found your wallet. It's mine now.",
+      "read": true,
+      "flagged": false,
+      "personal": "only",
+      "text": "Finders keepers. Nice photo of the beets."
+     },
+     {
+      "hours_ago": 168,
+      "sender": "Ryan Howard",
+      "sender_email": "rhoward@dundermifflin.com",
+      "subject": "New startup idea: Paper but for millennials",
+      "read": true,
+      "flagged": false,
+      "personal": "others",
+      "text": "Hear me out: paper, but it is an app. Seed round opens Friday.\n\nRyan"
+     },
+     {
+      "hours_ago": 170,
+      "sender": "Meredith Palmer",
+      "sender_email": "mpalmer@dundermifflin.com",
+      "subject": "Happy Hour at Poor Richard's (you're buying)",
+      "read": true,
+      "flagged": false,
+      "personal": "others",
+      "text": "Tonight at 6. You lost the bet, remember?\n\nMeredith"
+     }
+    ]
+   }
+  }
 polling_verb: get
 framework_version: latest
 serverless_language: python
@@ -10,7 +167,7 @@ refresh_interval_floor:
 polling_url:
 polling_headers:
 polling_body:
-id: 198482
+id: 519097
 oauth_enabled: 'false'
 oauth_pkce_enabled: 'no'
 custom_fields:
@@ -182,12 +339,12 @@ custom_fields:
   min: 1
   max: 65535
   help_text: |
-    <strong>Recommended: 993</strong> (SSL/TLS encrypted connection)<br /><br />
-    Use 143 only if your provider requires non-SSL IMAP.<br /><br />
-    <em>Always prefer encrypted connections for security. Most modern email providers use port 993.</em>
+    <strong>Usually 993.</strong> The plugin always connects with SSL/TLS (implicit TLS);
+    port 143 (plain IMAP or STARTTLS) is not supported.
 - keyname: folder
   field_type: string
   name: Mailbox Folder
+  group: Mailbox
   description: Email folder to display messages from.
   default: INBOX
   placeholder: INBOX
@@ -203,6 +360,7 @@ custom_fields:
 - keyname: gmail_category
   field_type: select
   name: Gmail Category Filter
+  group: Mailbox
   description: Filter emails by Gmail category.
   default: ''
   optional: true
@@ -221,47 +379,42 @@ custom_fields:
     <strong>Updates:</strong> Confirmations, receipts, statements<br />
     <strong>Forums:</strong> Mailing lists, newsletters, discussion groups<br /><br />
     Select 'All Categories' to show emails from every category.
-- keyname: limit
-  field_type: number
-  name: Number of Messages
-  description: How many emails to display on your TRMNL screen.
-  default: 10
-  min: 1
-  max: 30
-  help_text: ''
 - keyname: unread_only
   field_type: select
   name: Show Unread Only
+  group: Mailbox
   description: Display only unread email messages.
   default: 'no'
   optional: true
-  options:
-  - Yes - Unread only: 'yes'
-  - No - Show all: 'no'
   help_text: |
     <strong>Use cases:</strong><br />
     • See what needs your attention<br />
     • Monitor incoming emails<br />
     • Focus on new messages only<br /><br />
     <em>Tip: Combine with other filters for more specific results.</em>
+  options:
+  - Yes - Unread only: 'yes'
+  - No - Show all: 'no'
 - keyname: flagged_only
   field_type: select
   name: Show Flagged Only
+  group: Mailbox
   description: Display only flagged/starred email messages.
   default: 'no'
   optional: true
-  options:
-  - Yes - Important only: 'yes'
-  - No - Show all: 'no'
   help_text: |
     <strong>Great for:</strong><br />
     • Tracking emails that need follow-up<br />
     • Monitoring important conversations<br />
     • Focusing on priority messages<br /><br />
     <em>Flag emails in your email client to mark them as important.</em>
+  options:
+  - Yes - Important only: 'yes'
+  - No - Show all: 'no'
 - keyname: from_emails
   field_type: multi_string
   name: Filter by Sender
+  group: Mailbox
   description: Only show emails from specific senders.
   placeholder: email@domain.com
   optional: true
@@ -273,43 +426,89 @@ custom_fields:
     • <code>support</code> - Matches any address containing "support"<br />
     • <code>@gmail.com</code> - All Gmail senders<br /><br />
     <em>Leave empty to show emails from all senders.</em>
-- keyname: read_subject_regular
-  field_type: select
-  name: Display Read Emails as Regular Text
-  description: Show read emails with regular text weight.
-  default: 'yes'
+- keyname: hide_invitations
+  field_type: boolean
+  name: Hide Calendar Invitations
+  group: Mailbox
+  description: Leave out meeting invitations and updates (mails with a calendar .ics part).
+  default: false
   optional: true
+- keyname: display
+  field_type: select
+  name: Layout
+  group: Display
+  description: How the mail is laid out on the screen.
   options:
-  - Yes - Regular text: 'yes'
-  - No - Keep bold: 'no'
-  help_text: |
-    <strong>Visual distinction between read and unread emails:</strong><br /><br />
-    • <strong>Read emails:</strong> Regular text weight<br />
-    • <strong>Unread emails:</strong> Bold text weight<br /><br />
-    Makes it easier to spot new messages at a glance.
+  - Message list: list
+  - Latest message (with text): latest
+  - List with the latest message (side by side): combined
+  default: list
+  optional: true
+  conditional_validation:
+  - when: latest
+    hidden:
+    - show_previews
+    - limit
+    - group_by_date
+- keyname: show_previews
+  field_type: boolean
+  name: Show Previews
+  group: Display
+  description: A few lines of each message's text under it in the list.
+  default: false
+  optional: true
+- keyname: group_conversations
+  field_type: boolean
+  name: Group Conversations
+  group: Display
+  description: One row per conversation with the number of its messages, as in Gmail. Counts the messages among those shown.
+  default: false
+  optional: true
+- keyname: limit
+  field_type: number
+  name: Number of Messages
+  group: Display
+  description: How many emails to display on your TRMNL screen.
+  default: 10
+  min: 1
+  max: 30
+  help_text: ''
+- keyname: hide_quoted
+  field_type: boolean
+  name: Hide Quoted Replies
+  group: Display
+  description: Leave out quoted earlier messages and signatures from the message text.
+  default: true
+  optional: true
+- keyname: hide_title_bar
+  field_type: boolean
+  name: Hide Title Bar
+  group: Display
+  description: 'Leave out the bar at the bottom with your address and folder: more room for mail.'
+  default: false
+  optional: true
 - keyname: show_sender_email
   field_type: select
   name: Show Email Address Instead of Name
+  group: Format
   description: Choose what to display for each sender.
   default: 'no'
   optional: true
-  options:
-  - Yes - Show address: 'yes'
-  - No - Show name: 'no'
   help_text: |
     <strong>Use email addresses when:</strong><br />
     • Sender names aren't helpful or are missing<br />
     • You need to see the exact email address<br />
     • Working with automated or system emails
+  options:
+  - Yes - Show address: 'yes'
+  - No - Show name: 'no'
 - keyname: group_by_date
   field_type: select
   name: Group Emails by Date
+  group: Format
   description: Organize emails under date headers.
   default: 'yes'
   optional: true
-  options:
-  - No - Dates inline: 'no'
-  - Yes - Group with headers: 'yes'
   help_text: |
     <strong>Grouped view:</strong><br />
     • Today<br />
@@ -321,9 +520,13 @@ custom_fields:
     • 10:30 AM · sender@example.com<br />
     • Dec 17 · other@example.com<br /><br />
     <em>When grouped, all emails show time only (date is in the header).</em>
+  options:
+  - No - Dates inline: 'no'
+  - Yes - Group with headers: 'yes'
 - keyname: time_format
   field_type: select
   name: Time Format
+  group: Format
   description: How to display message times.
   default: 24h
   optional: true
@@ -336,6 +539,7 @@ custom_fields:
 - keyname: date_format
   field_type: select
   name: Date Format
+  group: Format
   description: How to display dates for emails.
   default: short
   optional: true
@@ -346,6 +550,6 @@ custom_fields:
   - Numeric (12/18/24): numeric
   - ISO Date (2024-12-18): iso
   help_text: Choose based on your display size and personal preference.
-name: Email Messages (IMAP)
+name: Email Messages (IMAP) Test
 description:
 refresh_interval: 1440
