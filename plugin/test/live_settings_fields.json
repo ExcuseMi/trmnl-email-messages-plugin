@@ -1,5 +1,5 @@
 {
- "source": "origin/main plugin/src/settings.yml, the live recipe 198482, 2026-10-25",
+ "source": "plugin/src/settings.yml as pushed to the live recipe 198482, 2026-10-26",
  "fields": {
   "author_bio": {
    "field_type": "author_bio",
@@ -62,10 +62,6 @@
     "Forums"
    ]
   },
-  "limit": {
-   "field_type": "number",
-   "options": []
-  },
   "unread_only": {
    "field_type": "select",
    "options": [
@@ -84,12 +80,37 @@
    "field_type": "multi_string",
    "options": []
   },
-  "read_subject_regular": {
+  "hide_invitations": {
+   "field_type": "boolean",
+   "options": []
+  },
+  "display": {
    "field_type": "select",
    "options": [
-    "yes",
-    "no"
+    "list",
+    "latest",
+    "combined"
    ]
+  },
+  "show_previews": {
+   "field_type": "boolean",
+   "options": []
+  },
+  "group_conversations": {
+   "field_type": "boolean",
+   "options": []
+  },
+  "limit": {
+   "field_type": "number",
+   "options": []
+  },
+  "hide_quoted": {
+   "field_type": "boolean",
+   "options": []
+  },
+  "hide_title_bar": {
+   "field_type": "boolean",
+   "options": []
   },
   "show_sender_email": {
    "field_type": "select",
