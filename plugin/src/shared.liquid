@@ -56,17 +56,80 @@
 </svg>{% endif %}
 {% endtemplate %}
 
-{% template main %}
-<div class="layout layout--stretch layout--center">
+{% comment %} Message state as icons, in the text color (white in the open row): star = flagged, dot = unread, clip = attachment {% endcomment %}
+{% template mail_icons %}
+{% if unread %}<svg class="{{ size | default: "w--4" }} shrink-0" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="6" fill="currentColor"/></svg>{% endif %}
+{% if flagged %}<svg class="{{ size | default: "w--4" }} shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M11.2691 4.41115C11.5006 3.89177 11.6164 3.63208 11.7776 3.55211C11.9176 3.48263 12.082 3.48263 12.222 3.55211C12.3832 3.63208 12.499 3.89177 12.7305 4.41115L14.5745 8.54808C14.643 8.70162 14.6772 8.77839 14.7302 8.83718C14.777 8.8892 14.8343 8.93081 14.8982 8.95929C14.9705 8.99149 15.0541 9.00031 15.2213 9.01795L19.7256 9.49336C20.2911 9.55304 20.5738 9.58288 20.6997 9.71147C20.809 9.82316 20.8598 9.97956 20.837 10.1342C20.8108 10.3122 20.5996 10.5025 20.1772 10.8832L16.8125 13.9154C16.6877 14.0279 16.6252 14.0842 16.5857 14.1527C16.5507 14.2134 16.5288 14.2807 16.5215 14.3503C16.5132 14.429 16.5306 14.5112 16.5655 14.6757L17.5053 19.1064C17.6233 19.6627 17.6823 19.9408 17.5989 20.1002C17.5264 20.2388 17.3934 20.3354 17.2393 20.3615C17.0619 20.3915 16.8156 20.2495 16.323 19.9654L12.3995 17.7024C12.2539 17.6184 12.1811 17.5765 12.1037 17.56C12.0352 17.5455 11.9644 17.5455 11.8959 17.56C11.8185 17.5765 11.7457 17.6184 11.6001 17.7024L7.67662 19.9654C7.18404 20.2495 6.93775 20.3915 6.76034 20.3615C6.60623 20.3354 6.47319 20.2388 6.40075 20.1002C6.31736 19.9408 6.37635 19.6627 6.49434 19.1064L7.4341 14.6757C7.46898 14.5112 7.48642 14.429 7.47814 14.3503C7.47081 14.2807 7.44894 14.2134 7.41394 14.1527C7.37439 14.0842 7.31195 14.0279 7.18708 13.9154L3.82246 10.8832C3.40005 10.5025 3.18884 10.3122 3.16258 10.1342C3.13978 9.97956 3.19059 9.82316 3.29993 9.71147C3.42581 9.58288 3.70856 9.55304 4.27406 9.49336L8.77835 9.01795C8.94553 9.00031 9.02911 8.99149 9.10139 8.95929C9.16534 8.93081 9.2226 8.8892 9.26946 8.83718C9.32241 8.77839 9.35663 8.70162 9.42508 8.54808L11.2691 4.41115Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endif %}
+{% if attachment %}<svg class="{{ size | default: "w--4" }} shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endif %}
+{% endtemplate %}
+
+{% comment %} Personal level, as Gmail shows it: » only to you, › to you and others; an empty column for lists,
+   so senders line up {% endcomment %}
+{% template personal_mark %}
+{% if personal == "only" %}<svg class="w--4 shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 6l6 6-6 6M12 6l6 6-6 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>{% elsif personal == "others" %}<svg class="w--4 shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>{% else %}<div class="w--4 shrink-0"></div>{% endif %}
+{% endtemplate %}
+
+{% comment %} One mailbox row, shared by the list and the rows under a short latest message {% endcomment %}
+{% template mail_row %}
+{% assign adjusted_epoch = message.timestamp | date: "%s" | plus: offset_seconds %}
+{% assign message_date = adjusted_epoch | date: "%Y-%m-%d" %}
+{% comment %} The time on the right of the sender: the clock when grouped by day or today, else the date {% endcomment %}
+{% assign when = adjusted_epoch | date: "%H:%M" %}
+{% if time_format == "12h" %}{% assign when = adjusted_epoch | date: "%-I:%M %p" %}{% endif %}
+{% if group_by_date != "yes" and message_date != today_date %}
+{% if date_format == "medium" %}{% assign when = adjusted_epoch | date: "%b %-d, %Y" %}
+{% elsif date_format == "long" %}{% assign when = adjusted_epoch | date: "%B %-d, %Y" %}
+{% elsif date_format == "numeric" %}{% assign when = adjusted_epoch | date: "%m/%d/%y" %}
+{% elsif date_format == "iso" %}{% assign when = adjusted_epoch | date: "%Y-%m-%d" %}
+{% else %}{% assign when = adjusted_epoch | date: "%b %-d" %}{% endif %}
+{% endif %}
+{% assign sender_label = message.sender %}
+{% assign address_setting = trmnl.plugin_settings.custom_fields_values.show_sender_email %}
+{% if address_setting == true or address_setting == "true" or address_setting == "yes" %}{% assign sender_label = message.sender_email %}{% endif %}
+
+{% comment %} One mailbox row: a black bar marks unread mail; sender and time, subject, then the start of the text {% endcomment %}
+{% comment %} Combined view: room between the times and the line to the message {% endcomment %}
+<div class="item{% if beside_open %} pr--2{% endif %}">
+  <div class="meta w--1 {% if message.read %}bg--white{% else %}bg--black{% endif %}"></div>
+  <div class="content basis--0 grow">
+    <div class="flex flex--row flex--center-y gap--small w--full">
+      {% render "personal_mark": personal: message.personal %}
+      <span class="title title--small lg:title--base grow" data-clamp="1">{{ sender_label | escape }}</span>
+      {% comment %} Conversation: the number of its messages as a badge {% endcomment %}
+      {% if message.count > 1 %}<span class="label label--small label--outline shrink-0">{{ message.count }}</span>{% endif %}
+      {% render "mail_icons": flagged: message.flagged %}
+      <span class="label label--small shrink-0">{{ when }}</span>
+    </div>
+    <span class="description description--large lg:description--xlarge font--bold" data-clamp="2">{{ message.subject | escape }}</span>
+    {% if message.encrypted %}
+    <span class="description">This message is encrypted and can't be shown.</span>
+    {% elsif message.paragraphs and message.paragraphs.size > 0 %}
+    {% comment %} List with preview: paragraphs on new lines without blank lines between them, clamped per view {% endcomment %}
+    <span class="description" data-clamp="{{ preview_lines | default: 2 }}">{% for paragraph in message.paragraphs %}{{ paragraph | escape | newline_to_br }}{% unless forloop.last %}<br>{% endunless %}{% endfor %}</span>
+    {% endif %}
+  </div>
+</div>
+{% endtemplate %}
+
+{% comment %} The list itself, without a frame: the list view and the left panel of the combined view {% endcomment %}
+{% template mail_list %}
+{% comment %} The list view: a plain block, as a flex column it stopped the framework from clamping the preview text.
+   The combined view: a flex column, so the list beside the line gets the height that is left {% endcomment %}
+<div class="{% if open_first %}flex flex--col h--full w--full{% else %}w--full h--full{% endif %}">
   {% if data.error %}
-  <div class="flex flex--col flex--center text-center px--4">
+  <div class="flex flex--col flex--center text-center px--4 w--full h--full">
     <span class="label label--large label--error mb--2">{{ data.error | escape }}</span>
     {% if data.message %}
     <div class="description">{{ data.message | escape }}</div>
     {% endif %}
+    {% comment %} How long each step took: shows where a timeout spends its time {% endcomment %}
+    {% if data.timing.steps_ms %}<div class="label label--small mt--2">{% for step in data.timing.steps_ms %}{{ step[0] }} {{ step[1] }} ms{% unless forloop.last %} · {% endunless %}{% endfor %}</div>{% endif %}
   </div>
   {% else %}
-  {% assign group_by_date = trmnl.plugin_settings.custom_fields_values.group_by_date | default: "no" %}
+  {% comment %} Switches arrive as true/false; installs from before the switches kept "yes"/"no" {% endcomment %}
+  {% assign group_setting = trmnl.plugin_settings.custom_fields_values.group_by_date %}
+  {% assign group_by_date = "no" %}
+  {% if group_setting == true or group_setting == "true" or group_setting == "yes" %}{% assign group_by_date = "yes" %}{% endif %}
   {% assign time_format = trmnl.plugin_settings.custom_fields_values.time_format | default: "24h" %}
   {% assign date_format = trmnl.plugin_settings.custom_fields_values.date_format | default: "short" %}
   {% assign offset_seconds = trmnl.user.utc_offset | default: 0 %}
@@ -79,8 +142,16 @@
   {% assign yesterday_adjusted = yesterday_epoch | plus: offset_seconds %}
   {% assign yesterday_date = yesterday_adjusted | date: "%Y-%m-%d" %}
 
+  {% if open_first %}
+  {% comment %} Combined view: the open message's row stands above the list; the line to the message panel runs beside
+     the rest of the list only, which leaves an opening exactly as tall as the open row {% endcomment %}
+  {% comment %} Same structure as the rest below, with an empty spacer where the line runs: the right edges line up {% endcomment %}
+  <div class="flex flex--row gap--none w--full">
+  <div class="flex flex--col flex--left grow">
+  {% else %}
   <div class="columns" data-overflow-cols="{{columns | default: 2 }}">
     <div class="column">
+  {% endif %}
       {% assign last_group = "" %}
 
       {% for message in data.messages %}
@@ -110,105 +181,44 @@
 
       {% comment %} Add group header if changed {% endcomment %}
       {% if group_label != last_group %}
-      <span class="label label--medium group-header mt--1" data-group-header="true">{{ group_label }}</span>
+      <span class="label label--base group-header mt--1" data-group-header="true">{{ group_label }}</span>
       {% assign last_group = group_label %}
       {% endif %}
       {% endif %}
 
-      {% comment %} Email item {% endcomment %}
-      <div class="item">
-        <div class="meta w--10 rounded">
-          {% if message.flagged %}
-          <svg class="image-stroke w--8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M11.2691 4.41115C11.5006 3.89177 11.6164 3.63208 11.7776 3.55211C11.9176 3.48263 12.082 3.48263 12.222 3.55211C12.3832 3.63208 12.499 3.89177 12.7305 4.41115L14.5745 8.54808C14.643 8.70162 14.6772 8.77839 14.7302 8.83718C14.777 8.8892 14.8343 8.93081 14.8982 8.95929C14.9705 8.99149 15.0541 9.00031 15.2213 9.01795L19.7256 9.49336C20.2911 9.55304 20.5738 9.58288 20.6997 9.71147C20.809 9.82316 20.8598 9.97956 20.837 10.1342C20.8108 10.3122 20.5996 10.5025 20.1772 10.8832L16.8125 13.9154C16.6877 14.0279 16.6252 14.0842 16.5857 14.1527C16.5507 14.2134 16.5288 14.2807 16.5215 14.3503C16.5132 14.429 16.5306 14.5112 16.5655 14.6757L17.5053 19.1064C17.6233 19.6627 17.6823 19.9408 17.5989 20.1002C17.5264 20.2388 17.3934 20.3354 17.2393 20.3615C17.0619 20.3915 16.8156 20.2495 16.323 19.9654L12.3995 17.7024C12.2539 17.6184 12.1811 17.5765 12.1037 17.56C12.0352 17.5455 11.9644 17.5455 11.8959 17.56C11.8185 17.5765 11.7457 17.6184 11.6001 17.7024L7.67662 19.9654C7.18404 20.2495 6.93775 20.3915 6.76034 20.3615C6.60623 20.3354 6.47319 20.2388 6.40075 20.1002C6.31736 19.9408 6.37635 19.6627 6.49434 19.1064L7.4341 14.6757C7.46898 14.5112 7.48642 14.429 7.47814 14.3503C7.47081 14.2807 7.44894 14.2134 7.41394 14.1527C7.37439 14.0842 7.31195 14.0279 7.18708 13.9154L3.82246 10.8832C3.40005 10.5025 3.18884 10.3122 3.16258 10.1342C3.13978 9.97956 3.19059 9.82316 3.29993 9.71147C3.42581 9.58288 3.70856 9.55304 4.27406 9.49336L8.77835 9.01795C8.94553 9.00031 9.02911 8.99149 9.10139 8.95929C9.16534 8.93081 9.2226 8.8892 9.26946 8.83718C9.32241 8.77839 9.35663 8.70162 9.42508 8.54808L11.2691 4.41115Z" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          {% elsif message.read %}
-          <svg class="image-stroke w--8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M4 9.00005L10.2 13.65C11.2667 14.45 12.7333 14.45 13.8 13.65L20 9" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M3 9.17681C3 8.45047 3.39378 7.78123 4.02871 7.42849L11.0287 3.5396C11.6328 3.20402 12.3672 3.20402 12.9713 3.5396L19.9713 7.42849C20.6062 7.78123 21 8.45047 21 9.17681V17C21 18.1046 20.1046 19 19 19H5C3.89543 19 3 18.1046 3 17V9.17681Z" stroke="#000000" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-          {% else %}
-          <svg class="image-stroke w--8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M4 7.00005L10.2 11.65C11.2667 12.45 12.7333 12.45 13.8 11.65L20 7" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <rect x="3" y="5" width="18" height="14" rx="2" stroke="#000000" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-          {% endif %}
-        </div>
-        <div class="content pl--1">
-          {% assign subject_classes = "title title--small" %}
-          {% if message.read and trmnl.plugin_settings.custom_fields_values.read_subject_regular == "yes" %}
-          {% assign subject_classes = "description" %}
-          {% endif %}
-          <span class="{{subject_classes}}" data-clamp="3">{{ message.subject | escape }}</span>
-
-          {% comment %} Framework label variants: flagged needs attention, read mail is secondary {% endcomment %}
-          {% assign meta_label = "label label--small" %}
-          {% if message.flagged %}
-          {% assign meta_label = "label label--small label--warning" %}
-          {% elsif message.read %}
-          {% assign meta_label = "label label--small label--gray" %}
-          {% endif %}
-          <div class="flex flex--row flex--wrap gap--small">
-            {% comment %} Show time only if grouped, otherwise show time/date based on today {% endcomment %}
-            {% if group_by_date == "yes" %}
-            {% comment %} Grouped mode: always show time {% endcomment %}
-            {% if time_format == "12h" %}
-            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%-I:%M %p" }}</span>
-            {% else %}
-            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%H:%M" }}</span>
-            {% endif %}
-            {% else %}
-            {% comment %} Ungrouped mode: show time for today, date for older {% endcomment %}
-            {% if message_date == today_date %}
-            {% if time_format == "12h" %}
-            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%-I:%M %p" }}</span>
-            {% else %}
-            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%H:%M" }}</span>
-            {% endif %}
-            {% else %}
-            {% if date_format == "medium" %}
-            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%b %-d, %Y" }}</span>
-            {% elsif date_format == "long" %}
-            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%B %-d, %Y" }}</span>
-            {% elsif date_format == "numeric" %}
-            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%m/%d/%y" }}</span>
-            {% elsif date_format == "iso" %}
-            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%Y-%m-%d" }}</span>
-            {% else %}
-            <span class="{{ meta_label }}">{{ adjusted_epoch | date: "%b %-d" }}</span>
-            {% endif %}
-            {% endif %}
-            {% endif %}
-
-            <span class="label label--small label--underline{% if message.read and message.flagged != true %} label--gray{% endif %}">
-              {% if trmnl.plugin_settings.custom_fields_values.show_sender_email == "yes" %}
-              {{ message.sender_email | escape }}
-              {% else %}
-              {{ message.sender | escape }}
-              {% endif %}
-            </span>
-          </div>
-          {% if message.paragraphs %}
-          {% comment %} List with preview: every entry shows the start of its text, clamped per view {% endcomment %}
-          {% if message.encrypted %}
-          <span class="description mt--1">This message is encrypted and can't be shown.</span>
-          {% elsif message.paragraphs.size > 0 %}
-          {% comment %} Paragraphs on new lines without blank lines between them: more text fits {% endcomment %}
-          <span class="description mt--1" data-clamp="{{ preview_lines | default: 2 }}">{% for paragraph in message.paragraphs %}{{ paragraph | escape | newline_to_br }}{% unless forloop.last %}<br>{% endunless %}{% endfor %}</span>
-          {% endif %}
-          {% endif %}
-        </div>
-      </div>
+      {% comment %} Combined view: the first row is the message open in the right panel {% endcomment %}
+      {% assign row_open = false %}{% if open_first and forloop.first %}{% assign row_open = true %}{% endif %}
+      {% render "mail_row": message:message, trmnl:trmnl, group_by_date:group_by_date, time_format:time_format, date_format:date_format, today_date:today_date, offset_seconds:offset_seconds, preview_lines:preview_lines, open:row_open, beside_open:open_first %}
+      {% unless forloop.last %}<div class="divider"></div>{% endunless %}
+      {% if open_first and forloop.first %}
+  </div>
+  <div class="self--stretch w--1"></div>
+  </div>
+  <div class="flex flex--row gap--none grow w--full">
+  {% comment %} Own wrapper: the list engine subtracts the height of what follows the list in its parent {% endcomment %}
+  <div class="grow h--full pb--2">
+  <div class="columns" data-overflow-cols="1">
+    <div class="column">
+      {% endif %}
       {% endfor %}
     </div>
   </div>
+  {% if open_first %}</div><div class="border--v-black self--stretch w--1"></div></div>{% endif %}
   {% endif %}
 </div>
-{% render "title_bar": data:data, trmnl:trmnl, show_instance:show_instance %}
+{% endtemplate %}
 
-  {% endtemplate %}
+{% template main %}
+<div class="layout layout--stretch layout--top">
+  {% render "mail_list": data:data, trmnl:trmnl, columns:columns, preview_lines:preview_lines %}
+</div>
+{% render "title_bar": data:data, trmnl:trmnl, show_instance:show_instance %}
+{% endtemplate %}
 
 {% template title_bar %}
+{% comment %} Hide Title Bar setting: a switch, true/false {% endcomment %}
+{% assign hide_setting = trmnl.plugin_settings.custom_fields_values.hide_title_bar %}
+{% unless hide_setting == true or hide_setting == "true" %}
 <div class="title_bar">
   {% render "email_provider_logo": email_provider: trmnl.plugin_settings.custom_fields_values.provider %}
   <span class="title text-stroke">{{ data.email | default: trmnl.plugin_settings.custom_fields_values.email | escape }}</span>
@@ -232,15 +242,18 @@
   </span>
   {% endif %}
 </div>
+{% endunless %}
 {% endtemplate %}
 
-{% template latest_message %}
+{% comment %} The message itself, without a frame: the latest-message view and the right panel of the combined view {% endcomment %}
+{% template latest_body %}
 {% assign m = data.message %}
-<div class="layout layout--col layout--top layout--left gap">
+{% assign others = others | default: data.others %}
   {% if data.error %}
   <div class="flex flex--col flex--center text-center px--4 w--full h--full">
     <span class="label label--large label--error mb--2">{{ data.error | escape }}</span>
     {% if data.message %}<div class="description">{{ data.message | escape }}</div>{% endif %}
+    {% if data.timing.steps_ms %}<div class="label label--small mt--2">{% for step in data.timing.steps_ms %}{{ step[0] }} {{ step[1] }} ms{% unless forloop.last %} · {% endunless %}{% endfor %}</div>{% endif %}
   </div>
   {% elsif m == nil %}
   <div class="flex flex--col flex--center text-center w--full h--full">
@@ -257,39 +270,92 @@
   {% if day != now_day %}{% assign when = epoch | date: "%b %-d" | append: " " | append: when %}{% endif %}
   {% assign sender_name = m.sender | default: m.sender_email %}
   {% assign initial = sender_name | slice: 0 | upcase %}
+    {% comment %} A short message leaves space: the messages before it follow as rows {% endcomment %}
+    {% assign body_chars = m.body.size | default: 0 %}
+    {% assign show_rows = false %}
+    {% if others.size > 0 and body_chars < medium_chars %}{% assign show_rows = true %}{% endif %}
     {% comment %} One richtext column: the content limiter subtracts the siblings before .content inside it {% endcomment %}
-    <div class="richtext richtext--left gap w--full h--full">
-    <div class="flex flex--row flex--center-y gap w--full">
+    <div class="richtext richtext--left gap--small lg:gap--base w--full{% unless show_rows %} h--full{% endunless %}">
+    <div class="flex flex--row flex--center-y gap--small lg:gap--base w--full">
       <span class="label label--xlarge label--filled shrink-0">{{ initial | escape }}</span>
-      <div class="flex flex--col flex--left grow">
-        <span class="title title--small" data-clamp="1">{{ sender_name | escape }}</span>
+      <div class="flex flex--col flex--left gap--none grow">
+        <div class="flex flex--row flex--center-y gap--small">
+          {% if m.personal %}{% render "personal_mark": personal: m.personal %}{% endif %}
+          <span class="title title--small" data-clamp="1">{{ sender_name | escape }}</span>
+        </div>
         {% if m.sender_email != blank and m.sender_email != sender_name %}
-        <span class="label label--small label--gray" data-clamp="1">{{ m.sender_email | escape }}</span>
+        <span class="description" data-clamp="1">{{ m.sender_email | escape }}</span>
         {% endif %}
       </div>
-      <div class="flex flex--col flex--right gap--small shrink-0">
-        <span class="label label--small">{{ when }}</span>
-        <div class="flex flex--row flex--right gap--small">
-          {% if m.flagged %}<span class="label label--small label--warning">Flagged</span>{% endif %}
-          {% unless m.read %}<span class="label label--small label--outline">Unread</span>{% endunless %}
-          {% if m.has_attachments %}<span class="label label--small label--outline">Attachment</span>{% endif %}
+      <div class="flex flex--col flex--right gap--none shrink-0">
+        <span class="description">{{ when }}</span>
+        <div class="flex flex--row flex--right flex--center-y gap--small">
+          {% assign unread = true %}{% if m.read %}{% assign unread = false %}{% endif %}
+          {% if m.count > 1 %}<span class="label label--small label--outline">{{ m.count }}</span>{% endif %}
+          {% render "mail_icons": flagged: m.flagged, unread: unread, attachment: m.has_attachments, size: "w--5" %}
         </div>
       </div>
     </div>
-    <span class="title text--left w--full" data-clamp="{{ title_lines | default: 2 }}">{{ m.subject | escape }}</span>
+    <span class="title {{ subject_size | default: "title--large lg:title--xlarge" }} font--bold text--left w--full" data-clamp="{{ title_lines | default: 2 }}">{{ m.subject | escape }}</span>
     <div class="divider"></div>
     {% if m.encrypted %}
     <span class="description">This message is encrypted and can't be shown.</span>
     {% elsif m.paragraphs == empty or m.paragraphs == nil %}
-    <span class="description label--gray">No text in this message.</span>
+    <span class="description 4bit:label--gray">No text in this message.</span>
     {% else %}
       {% comment %} The content limiter fills the space: smaller font first, then it cuts the paragraph that overflows {% endcomment %}
-      <div class="content content--base content--left gap text--left w--full" data-content-limiter="true">
-        {% comment %} Escape first: markdown_to_html passes raw HTML through {% endcomment %}
-        {{ m.markdown | escape | markdown_to_html }}
+      {% comment %} Short mail reads larger; the limits are characters per view. The limiter still shrinks what overflows {% endcomment %}
+      {% comment %} Large screens (the X) hold about 2.5x the characters at the same size {% endcomment %}
+      {% assign lg_chars = body_chars | times: 2 | divided_by: 5 %}
+      {% assign body_size = "content--base" %}
+      {% if show_rows %}{% assign body_size = "content--large" %}{% assign lg_chars = large_chars %}
+      {% elsif body_chars < large_chars %}{% assign body_size = "content--xlarge" %}
+      {% elsif body_chars < medium_chars %}{% assign body_size = "content--large" %}{% endif %}
+      {% if lg_chars < large_chars %}{% assign body_size = body_size | append: " lg:content--xlarge" %}
+      {% elsif lg_chars < medium_chars %}{% assign body_size = body_size | append: " lg:content--large" %}
+      {% else %}{% assign body_size = body_size | append: " lg:content--base" %}{% endif %}
+      <div class="content {{ body_size }} content--left gap--small lg:gap--base text--left w--full" data-content-limiter="true">
+        {% comment %} Escape first: markdown_to_html passes raw HTML through. font--bold on <strong>: the X's variable font
+           takes its weight from the inherited "wght" setting, so a plain <strong> stayed regular there (2026-10-26) {% endcomment %}
+        {{ m.markdown | escape | markdown_to_html | replace: "<strong>", '<strong class="font--bold">' }}
       </div>
     {% endif %}
     </div>
+    {% if show_rows %}
+    {% assign date_format = trmnl.plugin_settings.custom_fields_values.date_format | default: "short" %}
+    <div class="divider"></div>
+    {% comment %} The overflow engine hides the rows that do not fit {% endcomment %}
+    <div class="columns grow w--full" data-overflow-cols="1">
+      <div class="column">
+        {% for message in others %}
+        {% render "mail_row": message:message, trmnl:trmnl, group_by_date:"no", time_format:time_format, date_format:date_format, today_date:now_day, offset_seconds:offset_seconds %}
+        {% unless forloop.last %}<div class="divider"></div>{% endunless %}
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
   {% endif %}
+{% endtemplate %}
+
+{% template latest_message %}
+<div class="layout layout--col layout--top layout--left gap--small lg:gap--base">
+  {% render "latest_body": data:data, trmnl:trmnl, others:others, title_lines:title_lines, subject_size:subject_size, large_chars:large_chars, medium_chars:medium_chars %}
 </div>
+{% endtemplate %}
+
+{% comment %} List with the latest message: the list on the left, the newest message with its text on the right {% endcomment %}
+{% template combined %}
+{% if data.error %}
+{% render "main": data:data, trmnl:trmnl %}
+{% else %}
+<div class="layout layout--row layout--stretch gap--large">
+  <div class="flex flex--col h--full basis--0 grow">
+    {% render "mail_list": data:data, trmnl:trmnl, columns: 1, open_first: true, preview_lines: preview_lines %}
+  </div>
+  <div class="flex flex--col flex--top flex--left h--full basis--0 grow gap--small lg:gap--base">
+    {% render "latest_body": data:data, trmnl:trmnl, title_lines: title_lines, subject_size: subject_size, large_chars: large_chars, medium_chars: medium_chars %}
+  </div>
+</div>
+{% render "title_bar": data:data, trmnl:trmnl, show_instance: "yes" %}
+{% endif %}
 {% endtemplate %}

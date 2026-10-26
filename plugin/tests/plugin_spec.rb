@@ -23,16 +23,26 @@ RSpec.describe 'Email Messages' do
     end
   end
 
-  it 'marks read mail gray and flagged mail as a warning' do
+  # Owner 2026-10-25: no gray on 1-bit and 2-bit screens (dither is hard to read)
+  it 'marks unread mail with a black bar and flagged mail with a star, without gray' do
     screen = trmnl.render(view: 'full', now: NOW, data: DATA, transform: false, custom_fields: FIELDS)
-    expect(screen).to have_css('.label--warning', minimum: 2)
-    expect(screen).to have_css('.label--gray', minimum: 2)
+    expect(screen).to have_css('.meta.bg--black', count: MESSAGES.count { !_1[:read] })
+    expect(screen).to have_css('.meta.bg--white', count: MESSAGES.count { _1[:read] })
+    expect(screen).to have_css('.item svg', count: MESSAGES.count { _1[:flagged] })
+    expect(screen).to have_no_css('.label--gray, .label--warning')
   end
 
   it 'shows an error as an error label' do
     error = { data: { success: false, code: 'AUTH_FAILED', error: 'Auth Failed', message: 'Login failed.' } }
     screen = trmnl.render(view: 'full', now: NOW, data: error, transform: false, custom_fields: FIELDS)
     expect(screen).to have_css('.label--error', text: 'Auth Failed')
+  end
+
+  it 'shows how long each step took on a timeout' do
+    error = { data: { success: false, code: 'TIMEOUT', error: 'Timeout', message: 'The mail server took too long to answer.',
+                      timing: { steps_ms: { connect: 410, login: 1220, select: 95, search: 1810 }, total_ms: 3535 } } }
+    screen = trmnl.render(view: 'full', now: NOW, data: error, transform: false, custom_fields: FIELDS)
+    expect(screen).to have_text('search 1810 ms')
   end
 end
 
@@ -60,6 +70,14 @@ RSpec.describe 'List with preview' do
       expect(screen).to have_text('Hi all,')
       expect(screen).to have_no_problems
       expect(screen).to match_snapshot
+    end
+  end
+
+  # Owner 2026-10-25: yes/no selects became switches; installs from before keep their saved yes/no
+  [[true, true], ['yes', true], [false, false], ['no', false]].each do |value, grouped|
+    it "groups by date for the switch value #{value.inspect}" do
+      screen = trmnl.render(view: 'full', now: NOW, data: DATA, transform: false, custom_fields: FIELDS.merge(group_by_date: value))
+      grouped ? expect(screen).to(have_text('Yesterday')) : expect(screen).to(have_no_text('Yesterday'))
     end
   end
 end

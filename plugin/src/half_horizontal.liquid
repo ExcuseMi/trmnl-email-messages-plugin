@@ -1,6 +1,8 @@
-{% if data.display == "latest" %}
-{% render "latest_message": data:data, trmnl:trmnl, title_lines: 1 %}
+{% if data.display == "combined" %}
+{% render "combined": data:data, trmnl:trmnl, preview_lines: 2, title_lines: 1, subject_size: "title--base lg:title--large", large_chars: 25, medium_chars: 60 %}
+{% elsif data.display == "latest" %}
+{% render "latest_message": data:data, trmnl:trmnl, title_lines: 1, subject_size: "title--base lg:title--large", large_chars: 60, medium_chars: 140 %}
 {% render "title_bar": data:data, trmnl:trmnl, show_instance: "yes" %}
 {% else %}
-{% render "main": data:data, trmnl:trmnl, preview_lines: 2 %}
+{% render "main": data:data, trmnl:trmnl, preview_lines: 3 %}
 {% endif %}

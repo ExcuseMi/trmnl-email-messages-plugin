@@ -36,12 +36,22 @@ RSpec.describe 'Latest message display' do
     end
   end
 
-  it 'labels unread, flagged and attachments' do
+  # Owner 2026-10-25: icons instead of the Flagged / Unread / Attachment labels
+  it 'shows unread, flagged and attachments as icons' do
     screen = render_latest('full', latest_data)
-    expect(screen).to have_css('.label--warning')
-    expect(screen).to have_css('.label--outline', text: 'Unread')
+    expect(screen).to have_css('svg circle', count: 1)            # unread dot
+    expect(screen).to have_css("svg path[d^='M11.2691']", count: 1) # star
+    expect(screen).to have_css("svg path[d^='M21.44']", count: 1)   # paperclip
+    expect(screen).to have_no_text('Flagged')
+    expect(screen).to have_no_css('.label--gray, .label--warning')
     expect(screen).to have_css('.label--filled', text: 'J')
-    expect(screen).to have_css('.label--outline', text: 'Attachment')
+  end
+
+  it 'shows no state icons for a read, plain message' do
+    plain = LATEST_MESSAGE.merge(read: true, flagged: false, has_attachments: false)
+    screen = render_latest('full', latest_data(plain))
+    expect(screen).to have_no_css('svg circle')
+    expect(screen).to have_no_css("svg path[d^='M11.2691'], svg path[d^='M21.44']")
   end
 
   it 'says so for an encrypted message' do
@@ -76,5 +86,25 @@ RSpec.describe 'Latest message markdown' do
     expect(screen).to have_no_css('.content img')
     expect(screen).to have_no_css('.content b')
     expect(screen).to have_text('<img src=x onerror=alert(1)>')
+  end
+
+  # 2026-10-26: on the X (variable font) a plain <strong> inherited the regular "wght" and showed no bold
+  %w[og_plus v2].each do |device|
+    it "shows bold text as bold on #{device}" do
+      screen = trmnl.render(view: 'full', device:, now: LATEST_NOW, data: latest_data, transform: false, custom_fields: LATEST_FIELDS)
+      weights = screen.evaluate("[...document.querySelectorAll('.content strong')].map(e => getComputedStyle(e).fontVariationSettings)")
+      expect(weights).not_to be_empty
+      expect(weights).to all(include('700'))
+    end
+  end
+
+  # Owner 2026-10-26: the message header shows the personal level and the conversation count too
+  it 'shows the personal level and the conversation badge in the message header' do
+    screen = render_latest('full', latest_data(LATEST_MESSAGE.merge(personal: 'only', count: 3)))
+    expect(screen).to have_css("svg path[d^='M5 6l6 6']", count: 1)
+    expect(screen).to have_css('.label--outline', text: '3', count: 1)
+    plain = render_latest('full', latest_data(LATEST_MESSAGE.merge(personal: nil, count: 1)))
+    expect(plain).to have_no_css("svg path[d^='M5 6l6 6'], svg path[d^='M9 6l6 6']")
+    expect(plain).to have_no_css('.label--outline')
   end
 end

@@ -1,0 +1,126 @@
+{
+ "source": "origin/main plugin/src/settings.yml, the live recipe 198482, 2026-10-25",
+ "fields": {
+  "author_bio": {
+   "field_type": "author_bio",
+   "options": []
+  },
+  "provider": {
+   "field_type": "select",
+   "options": [
+    "gmail",
+    "outlook",
+    "yahoo",
+    "icloud",
+    "custom"
+   ]
+  },
+  "email": {
+   "field_type": "string",
+   "options": []
+  },
+  "gmail_password": {
+   "field_type": "password",
+   "options": []
+  },
+  "outlook_password": {
+   "field_type": "password",
+   "options": []
+  },
+  "yahoo_password": {
+   "field_type": "password",
+   "options": []
+  },
+  "icloud_password": {
+   "field_type": "password",
+   "options": []
+  },
+  "custom_password": {
+   "field_type": "password",
+   "options": []
+  },
+  "custom_server": {
+   "field_type": "string",
+   "options": []
+  },
+  "custom_port": {
+   "field_type": "number",
+   "options": []
+  },
+  "folder": {
+   "field_type": "string",
+   "options": []
+  },
+  "gmail_category": {
+   "field_type": "select",
+   "options": [
+    "",
+    "Primary",
+    "Social",
+    "Promotions",
+    "Updates",
+    "Forums"
+   ]
+  },
+  "limit": {
+   "field_type": "number",
+   "options": []
+  },
+  "unread_only": {
+   "field_type": "select",
+   "options": [
+    "yes",
+    "no"
+   ]
+  },
+  "flagged_only": {
+   "field_type": "select",
+   "options": [
+    "yes",
+    "no"
+   ]
+  },
+  "from_emails": {
+   "field_type": "multi_string",
+   "options": []
+  },
+  "read_subject_regular": {
+   "field_type": "select",
+   "options": [
+    "yes",
+    "no"
+   ]
+  },
+  "show_sender_email": {
+   "field_type": "select",
+   "options": [
+    "yes",
+    "no"
+   ]
+  },
+  "group_by_date": {
+   "field_type": "select",
+   "options": [
+    "no",
+    "yes"
+   ]
+  },
+  "time_format": {
+   "field_type": "select",
+   "options": [
+    "24h",
+    "12h"
+   ]
+  },
+  "date_format": {
+   "field_type": "select",
+   "options": [
+    "short",
+    "medium",
+    "long",
+    "numeric",
+    "iso"
+   ]
+  }
+ }
+}
